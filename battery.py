@@ -33,7 +33,7 @@ class Battery():
 
         # Pool energy costs; treat all energy as fungible once it enters battery
         self.avg_energy_price = \
-            (self.avg_energy_price * self.current_capacity + duration * effective_energy_price * self.continuous_power_rate) \
+            (self.avg_energy_price * self.current_capacity + duration * effective_energy_price * self.continuous_power) \
             / (self.current_capacity + duration * self.continuous_power)
         
         self.current_capacity += duration * self.continuous_power
