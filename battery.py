@@ -1,11 +1,11 @@
 class Battery():
-    def __init__(self, nominal_capacity=13.5, continuous_power=5, charging_efficiency=0.90) -> None:
+    def __init__(self, nominal_capacity=13.5, continuous_power=5, charging_efficiency=0.95) -> None:
         '''
         Battery parameters based on Tesla Powerwall 2 spec sheet:
         (https://digitalassets.tesla.com/tesla-contents/image/upload/powerwall-2-ac-datasheet-en-na_001)
             nominal_capacity = 13.5 kWh
             continuous_power = 5 kW (charging and discharging)
-            charging_efficiency = 90%
+            charging_efficiency = 95%
         '''
         self.nominal_capacity = nominal_capacity
         self.continuous_power = continuous_power
@@ -13,13 +13,13 @@ class Battery():
         self.current_capacity = 0
         self.avg_energy_price = 0
     
-    def charge(self, duration, energy_price):
+    def charge(self, energy_price, duration=1):
         '''
             Duration: Charging duration in hours 
             Energy_Price: Energy price in $/kWh
         '''
         if self.current_capacity == self.nominal_capacity:
-            return (self.current_capacity, self.avg_energy_price, -1) # penalize agent for trying to charge full battery
+            return (-1) # penalize agent for trying to charge full battery
 
         charge_0 = self.current_capacity
         charge_1 = charge_0 + duration * self.continuous_power
@@ -38,12 +38,15 @@ class Battery():
         
         self.current_capacity += duration * self.continuous_power
 
-        return (self.current_capacity, self.avg_energy_price, 0) 
+        return (0)
     
-    def discharge(self, duration, energy_price):
+    def discharge(self, energy_price, duration=1):
         '''
+        Parameters:
             Duration: Charging duration in hours 
             Energy_Price: Energy price in $/kWh
+        Returns:
+            current_capacity: 
         '''
         charge_0 = self.current_capacity
         charge_1 = charge_0 - duration * self.continuous_power
@@ -55,9 +58,8 @@ class Battery():
 
         energy_sold = duration * self.continuous_power
         self.current_capacity -= energy_sold
-        arbitrage_profit = (energy_price - self.avg_energy_price) * energy_sold
+        profit = (energy_price - self.avg_energy_price) * energy_sold
 
-        return (self.current_capacity, self.avg_energy_price, arbitrage_profit)
-
+        return  (profit)
             
 
