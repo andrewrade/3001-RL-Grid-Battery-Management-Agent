@@ -1,7 +1,7 @@
 import numpy as np
 import pandas as pd
-from gym_anytrading import TradingEnv, Actions, Positions
-from battery import Battery
+from gym_anytrading.envs import TradingEnv, Actions, Positions
+from gym_power_trading.envs.battery import Battery
 
 class PowerTradingEnv(TradingEnv):
 
@@ -11,7 +11,7 @@ class PowerTradingEnv(TradingEnv):
         self.frame_bound = frame_bound
         super().__init__(df, window_size, render_mode)
 
-        self.trade_fee_ask_percent = 0.005  # unit
+        #self.trade_fee_ask_percent = 0.005  # unit
         self.battery = Battery(nominal_capacity=battery_capacity, continuous_power=battery_cont_power)
     
     def reset(self, seed=None, options=None):
@@ -43,6 +43,7 @@ class PowerTradingEnv(TradingEnv):
 
         trade = False
         if (
+            # Change trading logic (battery is continuously charging)
             (action == Actions.Buy.value and self._position == Positions.Short) or
             (action == Actions.Sell.value and self._position == Positions.Long)
         ):
@@ -57,7 +58,7 @@ class PowerTradingEnv(TradingEnv):
                 reward = self.battery.charge(current_price, duration=1) # Charges for full 1-hr tick 
             else:
                 reward = self.battery.discharge(current_price, duration=1)
-                self._total_profit += reward * (1-self.trade_fee_ask_percent)
+                self._total_profit += reward #*(1-self.trade_fee_ask_percent)
 
         return reward
 
