@@ -61,5 +61,12 @@ class Battery():
         profit = (energy_price - self.avg_energy_price) * energy_sold
 
         return  (profit)
+    
+    def reset(self):
+        '''
+        Reset battery state
+        '''
+        self.current_capacity = 0
+        self.avg_energy_price = 0
             
 

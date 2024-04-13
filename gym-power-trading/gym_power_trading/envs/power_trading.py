@@ -13,6 +13,14 @@ class PowerTradingEnv(TradingEnv):
 
         self.trade_fee_ask_percent = 0.005  # unit
         self.battery = Battery(nominal_capacity=battery_capacity, continuous_power=battery_cont_power)
+    
+    def reset(self, seed=None, options=None):
+        '''
+        Extends TradingEnv reset method to re-set battery state
+        '''
+        observation, info = super().reset(seed=seed, options=options)
+        self.battery.reset()
+        return observation, info
 
     def _process_data(self):
         prices = self.df.loc[:, 'Close'].to_numpy()
@@ -25,7 +33,13 @@ class PowerTradingEnv(TradingEnv):
 
         return prices.astype(np.float32), signal_features.astype(np.float32)
 
-    def _calculate_profit(self, action):
+    def _get_observation(self):
+        # Add battery attributes to env observation
+        battery_obs = np.array(self.battery.current_charge, self.battery.avg_energy_price)
+        augmented_obs = np.append(super()._get_observation(), battery_obs)
+        return augmented_obs
+
+    def _calculate_reward(self, action):
 
         trade = False
         if (
@@ -47,29 +61,8 @@ class PowerTradingEnv(TradingEnv):
 
         return reward
 
-    def max_possible_profit(self):
-        current_tick = self._start_tick
-        last_trade_tick = current_tick - 1
-        profit = 1.
 
-        while current_tick <= self._end_tick:
-            position = None
-            if self.prices[current_tick] < self.prices[current_tick - 1]:
-                while (current_tick <= self._end_tick and
-                       self.prices[current_tick] < self.prices[current_tick - 1]):
-                    current_tick += 1
-                position = Positions.Short
-            else:
-                while (current_tick <= self._end_tick and
-                       self.prices[current_tick] >= self.prices[current_tick - 1]):
-                    current_tick += 1
-                position = Positions.Long
 
-            if position == Positions.Long:
-                current_price = self.prices[current_tick - 1]
-                last_trade_price = self.prices[last_trade_tick]
-                shares = profit / last_trade_price
-                profit = shares * current_price
-            last_trade_tick = current_tick - 1
+    
 
-        return profit
+
