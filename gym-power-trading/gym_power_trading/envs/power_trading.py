@@ -45,10 +45,10 @@ class PowerTradingEnv(TradingEnv):
         self._truncated = (self._current_tick == self._end_tick) # Truncated = True if last tick in time series
         self._current_tick += 1
 
-        # Calculate reward and update totals
-        step_reward, step_profit = self._calculate_reward(action)
+        # Calculate reward & profit, update totals
+        step_reward, power_traded = self._calculate_reward(action)
         self._total_reward += step_reward
-        self._total_profit += step_profit
+        self._total_profit += self._update_profit(power_traded, action)
 
         # Update position if agent makes trade
         if trade:
@@ -100,7 +100,7 @@ class PowerTradingEnv(TradingEnv):
         trade = action != Actions.Hold.value # Trade = True if action isn't hold
         reward = 0
         penalty = 0
-        profit = 0
+        power_traded = 0
 
         if trade:
             current_price = self.prices[self._current_tick]
@@ -121,8 +121,25 @@ class PowerTradingEnv(TradingEnv):
                 # Discharge battery and calculate reward (Positive reward for profit, negative for loss)
                 duration_actual = self.battery.discharge(current_price, duration=1)
                 reward = (self.battery.continuous_power * duration_actual) * (current_price - self.battery.avg_energy_price) 
-                profit += reward * (1-self.trade_fee_ask_percent) # Apply trading fees when calculating profit
+            
+            power_traded = (duration_actual * self.battery.continuous_power)
+        return reward, power_traded
+    
+    def _update_profit(self, power_traded, action):
+        '''
+        Update agent profit
+        Parameters:
+            power_traded (float): Quantity of power agent traded
+        Returns:
+            profit (float): Profit in $ generated when the agent sells power
+        '''
+        profit = 0
+
+        if action == Actions.Discharge.value:
+            current_price = self.prices[self._current_tick]
+            profit += (current_price - self.battery.avg_energy_price) * power_traded
         
-        return reward, profit
+        return profit
+
 
 
