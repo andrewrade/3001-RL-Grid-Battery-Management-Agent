@@ -69,6 +69,15 @@ class PowerTradingEnv(TradingEnv):
         return observation, step_reward, False, self._truncated, info
 
     def _get_info(self):
+        '''
+        Store info about agent after each tick in a dictionary including:
+            total_reward: Cumlative reward over Episode
+            total_profit: Cumulative profit over Episode
+            position: Current agent position (Hold, Charge, Discharge)
+            battery_charge: Battery current state of charge (Mwh)
+        Returns:
+            info (dict): Dictionary containing above summarized info
+        '''
         info = super()._get_info()
         info['battery_charge'] = self.battery.current_capacity # Extend info to include battery charge state
         return info
@@ -83,14 +92,17 @@ class PowerTradingEnv(TradingEnv):
         return prices.astype(np.float32), signal_features.astype(np.float32)
 
     def _get_observation(self):
+        '''
+        Extend agent observations to include battery state
+        '''
         base_obs = np.array([super()._get_observation()])
-        battery_obs = np.array([self.battery.current_capacity, self.battery.avg_energy_price]) # Add battery state to observation
+        battery_obs = np.array([self.battery.current_capacity, self.battery.avg_energy_price])
         augmented_obs = np.append(base_obs, battery_obs)
         return augmented_obs
 
     def _calculate_reward(self, action):
         '''
-        Calculate reward
+        Calculate reward over last tick based on action taken
         Parameters:
             action (Enum): Discrete action to take (Hold, Charge, Discharge)
         Returns:
@@ -127,7 +139,7 @@ class PowerTradingEnv(TradingEnv):
     
     def _update_profit(self, power_traded, action):
         '''
-        Update agent profit
+        Calculate agent profit over last tick based on action taken
         Parameters:
             power_traded (float): Quantity of power agent traded
         Returns:
