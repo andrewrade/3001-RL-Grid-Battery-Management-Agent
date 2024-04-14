@@ -69,8 +69,8 @@ class PowerTradingEnv(TradingEnv):
         return observation, step_reward, False, self._truncated, info
 
     def _get_info(self):
-        info = super._get_info()
-        info['battery_charge'] = self.battery.current_capacity() # Extend info to include battery charge state
+        info = super()._get_info()
+        info['battery_charge'] = self.battery.current_capacity # Extend info to include battery charge state
         return info
 
     def _process_data(self):
