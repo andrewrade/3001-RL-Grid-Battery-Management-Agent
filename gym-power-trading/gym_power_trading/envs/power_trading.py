@@ -1,6 +1,7 @@
 import numpy as np
 import pandas as pd
 from enum import Enum
+import gym
 from gym_anytrading.envs import TradingEnv
 from gym_power_trading.envs.battery import Battery
 
@@ -16,10 +17,10 @@ class PowerTradingEnv(TradingEnv):
 
         self.frame_bound = frame_bound
         super().__init__(df, window_size, render_mode)
-
+        self.action_space = gym.spaces.Discrete(len(Actions))
+        print(self.action_space) # Adding Hold as a position
         self.trade_fee_ask_percent = 0.005  # unit
-        # Add battery to environment
-        self.battery = Battery(nominal_capacity=battery_capacity, continuous_power=battery_cont_power)
+        self.battery = Battery(nominal_capacity=battery_capacity, continuous_power=battery_cont_power) # Add battery 
     
     def reset(self, seed=None, options=None):
         '''
@@ -66,6 +67,14 @@ class PowerTradingEnv(TradingEnv):
 
         return observation, step_reward, False, self._truncated, info
 
+    def _get_info(self):
+        return dict(
+            total_reward=self._total_reward,
+            total_profit=self._total_profit,
+            position=self._position, 
+            battery_charge=self.battery.current_capacity
+        )
+
     def _process_data(self):
         prices = self.df.loc[:, 'Close'].to_numpy()
 
@@ -79,7 +88,7 @@ class PowerTradingEnv(TradingEnv):
 
     def _get_observation(self):
         # Add battery attributes to env observation
-        battery_obs = np.array([self.battery.current_charge, self.battery.avg_energy_price])
+        battery_obs = np.array([self.battery.current_capacity, self.battery.avg_energy_price])
         base_obs = np.array([super()._get_observation()])
         augmented_obs = np.append(base_obs, battery_obs)
         return augmented_obs
@@ -110,8 +119,8 @@ class PowerTradingEnv(TradingEnv):
 
                 if overcharge:
                     if duration > 0.9:
-                        duration = 0.9 # Clip penalties to prevent excessively large valuess
-                    # Scale penalty based on extent of overcharging (shorter durations charged mean more overcharging)
+                        duration = 0.9 # Clip duration to prevent excessively large penalties
+                    # Scale penalty based on extent of overcharging (shorter charge durations indicates more overcharging)
                     penalty = -1 / (1-duration) 
                 reward -= penalty 
             else:
