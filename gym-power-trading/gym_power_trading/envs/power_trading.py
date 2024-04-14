@@ -1,7 +1,13 @@
 import numpy as np
 import pandas as pd
-from gym_anytrading.envs import TradingEnv, Actions, Positions
+from enum import Enum
+from gym_anytrading.envs import TradingEnv
 from gym_power_trading.envs.battery import Battery
+
+class Actions(Enum):
+    Discharge = 0
+    Charge = 1
+    Hold = 2
 
 class PowerTradingEnv(TradingEnv):
 
@@ -11,16 +17,54 @@ class PowerTradingEnv(TradingEnv):
         self.frame_bound = frame_bound
         super().__init__(df, window_size, render_mode)
 
-        #self.trade_fee_ask_percent = 0.005  # unit
+        self.trade_fee_ask_percent = 0.005  # unit
+        # Add battery to environment
         self.battery = Battery(nominal_capacity=battery_capacity, continuous_power=battery_cont_power)
     
     def reset(self, seed=None, options=None):
         '''
-        Extends TradingEnv reset method to re-set battery state
+        Extend TradingEnv reset method to include battery state re-set 
         '''
         observation, info = super().reset(seed=seed, options=options)
         self.battery.reset()
         return observation, info
+    
+    def step(self, action):
+        '''
+         Step forward 1-tick in time
+         Parameters:
+            action (Enum): Discrete action to take (Hold, Charge, Discharge)
+         Returns:
+            observation (array): feature array
+            step_reward (float): Reward/Penalty agent receives from trading power for the current tick
+            done (bool): Whether terminated
+            truncated (bool): Whether truncated
+            info (dict): Agents total reward, profit and current position
+        '''
+        self._truncated = False
+        if self._current_tick == self._end_tick:
+            self._truncated = True
+
+        self._current_tick += 1
+        step_reward, step_profit = self._calculate_reward(action)
+        self._total_reward += step_reward
+        self._total_profit += step_profit
+
+        if action != Actions.Hold.value:
+            self._position = Actions.Charge.value if action == Actions.Charge.value else Actions.Discharge.value
+            self._last_trade_tick = self._current_tick
+        else:
+            self._position = Actions.Hold.value
+
+        self._position_history.append(self._position)
+        observation = self._get_observation()
+        info = self._get_info()
+        self._update_history(info)
+
+        if self.render_mode == 'human':
+            self._render_frame()
+
+        return observation, step_reward, False, self._truncated, info
 
     def _process_data(self):
         prices = self.df.loc[:, 'Close'].to_numpy()
@@ -35,35 +79,47 @@ class PowerTradingEnv(TradingEnv):
 
     def _get_observation(self):
         # Add battery attributes to env observation
-        battery_obs = np.array(self.battery.current_charge, self.battery.avg_energy_price)
-        augmented_obs = np.append(super()._get_observation(), battery_obs)
+        battery_obs = np.array([self.battery.current_charge, self.battery.avg_energy_price])
+        base_obs = np.array([super()._get_observation()])
+        augmented_obs = np.append(base_obs, battery_obs)
         return augmented_obs
 
     def _calculate_reward(self, action):
-
+        '''
+        Calculate reward
+        Parameters:
+            action (Enum): Discrete action to tkae (Hold, Charge, Discharge)
+        Returns:
+            reward (float): Reward/Penalty from action taken
+            profit (float): $ in profit (different from reward & calculated after trade fees)
+        '''
         trade = False
-        if (
-            # Change trading logic (battery is continuously charging)
-            (action == Actions.Buy.value and self._position == Positions.Short) or
-            (action == Actions.Sell.value and self._position == Positions.Long)
-        ):
+        reward = 0
+        penalty = 0
+        profit = 0
+
+        if action != Actions.Hold.value:
             trade = True
 
-        reward = 0
-        
         if trade:
             current_price = self.prices[self._current_tick]
-            
-            if action == Actions.Buy.value:
-                reward = self.battery.charge(current_price, duration=1) # Charges for full 1-hr tick 
+            if action == Actions.Charge.value:
+                # Return overcharge=True if can't charge for full 1-hr tick 
+                duration, overcharge = self.battery.charge(current_price, duration=1) 
+                reward = (self.battery.avg_energy_price - current_price) * duration
+
+                if overcharge:
+                    if duration > 0.9:
+                        duration = 0.9 # Clip penalties to prevent excessively large valuess
+                    # Scale penalty based on extent of overcharging (shorter durations charged mean more overcharging)
+                    penalty = -1 / (1-duration) 
+                reward -= penalty 
             else:
-                reward = self.battery.discharge(current_price, duration=1)
-                self._total_profit += reward #*(1-self.trade_fee_ask_percent)
-
-        return reward
-
-
-
-    
+                duration = self.battery.discharge(current_price, duration=1)
+                # Positive reward for profit, negative for loss
+                reward = (self.battery.continuous_power * duration) * (current_price - self.battery.avg_energy_price)
+                profit += reward * (1-self.trade_fee_ask_percent)
+        
+        return reward, profit
 
 

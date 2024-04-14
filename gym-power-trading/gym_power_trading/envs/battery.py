@@ -1,10 +1,9 @@
 class Battery():
-    def __init__(self, nominal_capacity=13.5, continuous_power=5, charging_efficiency=0.95) -> None:
+    def __init__(self, nominal_capacity=80, continuous_power=20, charging_efficiency=0.95) -> None:
         '''
-        Battery parameters based on Tesla Powerwall 2 spec sheet:
-        (https://digitalassets.tesla.com/tesla-contents/image/upload/powerwall-2-ac-datasheet-en-na_001)
-            nominal_capacity = 13.5 kWh
-            continuous_power = 5 kW (charging and discharging)
+        Based on San Diego BESS System 
+            nominal_capacity = 80 Mwh
+            continuous_power = 20 kW (charging and discharging)
             charging_efficiency = 95%
         '''
         self.nominal_capacity = nominal_capacity
@@ -15,19 +14,22 @@ class Battery():
     
     def charge(self, energy_price, duration=1):
         '''
-            Duration: Charging duration in hours 
-            Energy_Price: Energy price in $/kWh
+        Parameters:
+            Duration (float): Charging duration in hours 
+            Energy_Price (float): Energy price in $/kWh
+        Returns:
+            duration (float): Total duration charged (for calculating reward penalty for overcharging)
+            overcharge (bool): Flag indicating whether capacity would've been exceeded
         '''
-        if self.current_capacity == self.nominal_capacity:
-            return (-1) # penalize agent for trying to charge full battery
-
         charge_0 = self.current_capacity
         charge_1 = charge_0 + duration * self.continuous_power
-        
+
+        overcharge = False
         # Check for sufficient capacity to charge for full duration
         if charge_1 > self.nominal_capacity: 
             actual_charge = self.nominal_capacity - charge_0
             duration = actual_charge / self.continuous_power # Correct duration if capacity would be exceeded
+            overcharge = True
         
         effective_energy_price = energy_price / self.charging_efficiency # Correct energy price for efficiency losses
 
@@ -38,15 +40,15 @@ class Battery():
         
         self.current_capacity += duration * self.continuous_power
 
-        return (0)
+        return (duration, overcharge)
     
     def discharge(self, energy_price, duration=1):
         '''
         Parameters:
-            Duration: Charging duration in hours 
-            Energy_Price: Energy price in $/kWh
+            Duration (float): Charging duration in hours 
+            Energy_Price (float): Energy price in $/kWh
         Returns:
-            current_capacity: 
+            energy sold (float): Total amount of energy actually sold (discharged) 
         '''
         charge_0 = self.current_capacity
         charge_1 = charge_0 - duration * self.continuous_power
@@ -60,13 +62,11 @@ class Battery():
         self.current_capacity -= energy_sold
         profit = (energy_price - self.avg_energy_price) * energy_sold
 
-        return  (profit)
+        return  (duration)
     
     def reset(self):
         '''
-        Reset battery state
+        Reset battery internal state (between episodes)
         '''
         self.current_capacity = 0
         self.avg_energy_price = 0
-            
-
