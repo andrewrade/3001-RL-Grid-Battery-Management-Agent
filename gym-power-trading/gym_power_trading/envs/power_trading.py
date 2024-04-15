@@ -1,9 +1,11 @@
 import numpy as np
 import pandas as pd
 from enum import Enum
-import gym
+
+import gymnasium as gym
 from gym_anytrading.envs import TradingEnv
 from gym_power_trading.envs.battery import Battery
+from gym.spaces import Discrete
 
 class Actions(Enum):
     Discharge = 0
@@ -41,10 +43,10 @@ class PowerTradingEnv(TradingEnv):
             truncated (bool): Whether truncated 
             info (dict): Agents total reward, profit and current position
         '''
-        trade = action != Actions.Hold.value # Trade = True if action is not hold
-        self._truncated = (self._current_tick == self._end_tick) # Truncated = True if last tick in time series
         self._current_tick += 1
-
+        self._truncated = (self._current_tick == self._end_tick) # Truncated = True if last tick in time series
+        trade = action != Actions.Hold.value # Trade = True if action is not hold
+        
         # Calculate reward & profit, update totals
         step_reward, power_traded = self._calculate_reward(action)
         self._total_reward += step_reward
@@ -124,9 +126,9 @@ class PowerTradingEnv(TradingEnv):
                 reward = (self.battery.avg_energy_price - current_price) * duration_actual
                 
                 if overcharge:
-                    if duration_actual > 0.9:
-                        duration_actual = 0.9 # Clip duration to prevent excessively large penalties
-                    penalty = -1 / (1-duration_actual) # Scale penalty by amt of overcharging (shorter charge duration = longer overcharging)
+                    if duration_actual < 0.1:
+                        duration_actual = 0.1 # Clip duration to prevent excessively large penalties
+                    penalty = -1 / (duration_actual) # Scale penalty by amt of overcharging (shorter charge duration = longer overcharging)
                 reward += penalty 
             
             else:
