@@ -6,6 +6,10 @@ import gymnasium as gym
 from gym_power_trading.envs.battery import Battery
 from gym.spaces import Discrete
 
+import logging
+logging.basicConfig(level=logging.DEBUG)
+
+
 class Actions(Enum):
     Discharge = 0
     Charge = 1
@@ -146,10 +150,24 @@ class PowerTradingEnv(gym.Env):
         '''
         Produce Observations for agent
         '''
-        base_obs = self.signal_features[(self._current_tick-self.window_size+1):self._current_tick+1]
-        battery_obs = np.array([self.battery.capacity_observation, self.battery.price_observation]) # Scale between -1/1
-        augmented_obs = np.append(base_obs, battery_obs)
-        return augmented_obs
+        base_obs = self.signal_features[(self._current_tick - self.window_size + 1):self._current_tick+1]
+        
+
+        
+        battery_capacity = np.array(self.battery.capacity_observation).reshape(-1, 1)
+        battery_price = np.array(self.battery.price_observation).reshape(-1, 1)
+
+        logging.debug(f"Battery Capacity: {battery_capacity.shape}")
+        logging.debug(f"Battery Price: {battery_price.shape}")
+        
+        logging.debug(f"Battery Capacity: {battery_capacity}")
+        logging.debug(f"Battery Price: {battery_price}")
+        
+        augmented_observation = np.column_stack((base_obs, battery_capacity, battery_price))
+
+        
+
+        return augmented_observation
     
     def _update_history(self, info):
         '''
@@ -177,10 +195,10 @@ class PowerTradingEnv(gym.Env):
         reward = 0
         penalty = 0
         power_traded = 0
+        duration_actual = 0
+        current_price = self.prices[self._current_tick]
 
         if trade:
-            current_price = self.prices[self._current_tick]
-            
             if action == Actions.Charge.value:
                 # Charge battery and calculate reward 
                 # (Positive reward for reducing avg power price, penalty for increasing avg power price & overcharging)
@@ -192,13 +210,12 @@ class PowerTradingEnv(gym.Env):
                         duration_actual = 0.1 # Clip duration to prevent excessively large penalties
                     penalty = -1 / (duration_actual) # Scale penalty by amt of overcharging (shorter charge duration = longer overcharging)
                 reward += penalty 
-            
             else:
                 # Discharge battery and calculate reward (Positive reward for profit, negative for loss)
                 duration_actual = self.battery.discharge(current_price, duration=1)
                 reward = (self.battery.continuous_power * duration_actual) * (current_price - self.battery.avg_energy_price) 
         else:
-            self.battery.hold() # Call hold method to capture state observation in battery deque 
+            self.battery.hold(current_price) # Call hold method to capture state observation in battery deque 
             
             power_traded = (duration_actual * self.battery.continuous_power)
         return reward, power_traded
