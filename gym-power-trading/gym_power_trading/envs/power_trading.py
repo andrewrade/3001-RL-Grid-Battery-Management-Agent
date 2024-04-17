@@ -205,7 +205,7 @@ class PowerTradingEnv(gym.Env):
                 duration_actual = self.battery.discharge(current_price, duration=1)
                 reward = (self.battery.continuous_power * duration_actual) * (current_price - self.battery.avg_energy_price) 
         else:
-            self.battery.hold(current_price) # Call hold method to capture state observation in battery deque 
+            self.battery.hold() # Call hold method to capture state observation in battery deque 
             
         power_traded = (duration_actual * self.battery.continuous_power)
         return reward, power_traded

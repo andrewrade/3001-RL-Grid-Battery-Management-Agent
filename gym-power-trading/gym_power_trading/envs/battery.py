@@ -17,7 +17,7 @@ class Battery():
         
         # Store window size observations of battery state  to append to envirnoment observations
         self.capacity_observation = deque([0] * self.observation_window_size, maxlen=self.observation_window_size) 
-        self.price_observation = deque([0] * self.observation_window_size, maxlen=self.observation_window_size)
+        self.avg_price_observation = deque([0] * self.observation_window_size, maxlen=self.observation_window_size)
     
     def charge(self, energy_price, duration=1):
         '''
@@ -48,7 +48,7 @@ class Battery():
 
         # Append State to Observation Window
         self.capacity_observation.append(self.current_capacity)
-        self.price_observation.append(energy_price)
+        self.avg_price_observation.append(self.avg_energy_price)
 
         return (duration, overcharge)
     
@@ -73,17 +73,17 @@ class Battery():
 
         # Append State to Observation Window
         self.capacity_observation.append(self.current_capacity)
-        self.price_observation.append(energy_price)
+        self.avg_price_observation.append(self.avg_energy_price)
         
         return  (duration)
     
-    def hold(self, energy_price):
+    def hold(self):
         '''
         Append Battery state to observation window for ticks 
         when Agent decides to hold
         '''
         self.capacity_observation.append(self.current_capacity)
-        self.price_observation.append(energy_price)
+        self.avg_price_observation.append(self.avg_energy_price)
     
     def reset(self):
         '''
