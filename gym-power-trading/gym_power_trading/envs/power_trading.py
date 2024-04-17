@@ -3,7 +3,6 @@ import pandas as pd
 from enum import Enum
 
 import gymnasium as gym
-from gym_anytrading.envs import TradingEnv
 from gym_power_trading.envs.battery import Battery
 from gym.spaces import Discrete
 
@@ -12,23 +11,64 @@ class Actions(Enum):
     Charge = 1
     Hold = 2
 
-class PowerTradingEnv(TradingEnv):
+class PowerTradingEnv(gym.Env):
+    '''
+    Based on TradingEnv: https://github.com/AminHP/gym-anytrading/tree/master
+    Modified to include holding as an action, incorporated power trading 
+    via battery charging, discharging, reward and profit functions. 
+    '''
 
-    def __init__(self, df, window_size, frame_bound, battery_capacity=80, battery_cont_power=20, render_mode=None):
+    def __init__(self, df, window_size, frame_bound, battery_capacity=80, battery_cont_power=20,):
         assert len(frame_bound) == 2
 
+        # Process Inputs
+        self.df = df
+        self.prices, self.signal_features = self._process_data() 
+        self.window_size = window_size
         self.frame_bound = frame_bound
-        super().__init__(df, window_size, render_mode)
-        self.action_space = gym.spaces.Discrete(len(Actions))
-        self.trade_fee_ask_percent = 0.005  # unit
+        self.shape = (window_size, self.signal_features.shape[1]) # Observations
         self.battery = Battery(nominal_capacity=battery_capacity, continuous_power=battery_cont_power) # Add battery 
+        self.trade_fee_ask_percent = 0.005  # unit
+
+        BOUND = 1e5
+        # Initialize Spaces 
+        self.action_space = gym.spaces.Discrete(len(Actions))
+        self.observation_space = gym.spaces.Box(
+            low=-BOUND, high=BOUND, shape=self.shape, dtype=np.float32
+        )
+        
+        # episode attributes
+        self._start_tick = self.window_size
+        self._end_tick = len(self.prices) - 1
+        self._truncated = None
+        self._current_tick = None
+        self._last_trade_tick = None
+        self._position = None
+        self._position_history = None
+        self._total_reward = None
+        self._total_profit = None
+        self._first_rendering = None
+        self.history = None
+        
     
     def reset(self, seed=None, options=None):
         '''
-        Extend TradingEnv reset method to include battery state re-set 
+        Reset environment to random state and re-initialize the battery
         '''
-        observation, info = super().reset(seed=seed, options=options)
+        super().reset(seed=seed, options=options)
+        self._truncated = False
+        self._current_tick = self._start_tick
+        self._last_trade_tick = self._current_tick - 1
+        self._position = Actions.Hold
+        self._position_history = (self.window_size * [None]) + [self._position]
+        self._total_reward = 0.
+        self._total_profit = 0.  # unit
+        self._first_rendering = True
+        self.history = {}
         self.battery.reset()
+        observation = self._get_observation()
+        info = self._get_info()
+        
         return observation, info
     
     def step(self, action):
@@ -65,14 +105,12 @@ class PowerTradingEnv(TradingEnv):
         info = self._get_info()
         self._update_history(info)
 
-        if self.render_mode == 'human':
-            self._render_frame()
-
         return observation, step_reward, False, self._truncated, info
 
     def _get_info(self):
         '''
         Store info about agent after each tick in a dictionary including:
+        Parameters:
             total_reward: Cumlative reward over Episode
             total_profit: Cumulative profit over Episode
             position: Current agent position (Hold, Charge, Discharge)
@@ -80,11 +118,15 @@ class PowerTradingEnv(TradingEnv):
         Returns:
             info (dict): Dictionary containing above summarized info
         '''
-        info = super()._get_info()
-        info['battery_charge'] = self.battery.current_capacity # Extend info to include battery charge state
-        return info
+        return dict(
+            total_reward=self._total_reward,
+            total_profit=self._total_profit,
+            position=self._position,
+            battery_charge=self.battery.current_capacity
+        )
 
-    def _process_data(self):
+
+    def _process_data(self): # Scale features between -1 / 1
         prices = self.df.loc[:, 'Close'].to_numpy()
         prices[self.frame_bound[0] - self.window_size]  # validate index (TODO: Improve validation)
         prices = prices[self.frame_bound[0]-self.window_size:self.frame_bound[1]]
@@ -95,12 +137,25 @@ class PowerTradingEnv(TradingEnv):
 
     def _get_observation(self):
         '''
-        Extend agent observations to include battery state
+        Produce Observations for agent
         '''
-        base_obs = np.array([super()._get_observation()])
-        battery_obs = np.array([self.battery.current_capacity, self.battery.avg_energy_price])
+        base_obs = self.signal_features[(self._current_tick-self.window_size+1):self._current_tick+1]
+        battery_obs = np.array([self.battery.current_capacity, self.battery.avg_energy_price]) # Scale between -1/1
         augmented_obs = np.append(base_obs, battery_obs)
         return augmented_obs
+    
+    def _update_history(self, info):
+        '''
+        Add info from latest state to history
+        Parameters:
+            info (dict): Contains summary of reward, profit, battery charge 
+            and position from latest observation
+        '''
+        if not self.history:
+            self.history = {key: [] for key in info.keys()}
+        else:
+            for key, value in info.items():
+                self.history[key].append(value)
 
     def _calculate_reward(self, action):
         '''
@@ -151,7 +206,7 @@ class PowerTradingEnv(TradingEnv):
 
         if action == Actions.Discharge.value:
             current_price = self.prices[self._current_tick]
-            profit += (current_price - self.battery.avg_energy_price) * power_traded
+            profit += (current_price - self.battery.avg_energy_price) * power_traded * (1 - self.trade_fee_ask_percent)
         
         return profit
 
