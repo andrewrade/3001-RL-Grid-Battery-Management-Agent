@@ -18,19 +18,26 @@ class PowerTradingEnv(gym.Env):
     via battery charging, discharging, reward and profit functions. 
     '''
 
-    def __init__(self, df, window_size, frame_bound, battery_capacity=80, battery_cont_power=20,):
+    def __init__(self, df, window_size, frame_bound, battery_capacity=80, battery_cont_power=20, charging_efficiency=0.95):
         assert len(frame_bound) == 2
 
         # Process Inputs
         self.df = df
-        self.prices, self.signal_features = self._process_data() 
         self.window_size = window_size
         self.frame_bound = frame_bound
-        self.shape = (window_size, self.signal_features.shape[1]) # Observations
-        self.battery = Battery(nominal_capacity=battery_capacity, continuous_power=battery_cont_power) # Add battery 
+        self.prices, self.signal_features = self._process_data() 
+        # Observations (Window Size, Signal Features + Battery Observations)
+        self.shape = (window_size, self.signal_features.shape[1] + 2) 
         self.trade_fee_ask_percent = 0.005  # unit
-
-        BOUND = 1e5
+        
+        self.battery = Battery(
+                battery_capacity,
+                battery_cont_power,
+                charging_efficiency,
+                self.window_size
+        )
+        
+        BOUND = 1e2
         # Initialize Spaces 
         self.action_space = gym.spaces.Discrete(len(Actions))
         self.observation_space = gym.spaces.Box(
@@ -140,7 +147,7 @@ class PowerTradingEnv(gym.Env):
         Produce Observations for agent
         '''
         base_obs = self.signal_features[(self._current_tick-self.window_size+1):self._current_tick+1]
-        battery_obs = np.array([self.battery.current_capacity, self.battery.avg_energy_price]) # Scale between -1/1
+        battery_obs = np.array([self.battery.capacity_observation, self.battery.price_observation]) # Scale between -1/1
         augmented_obs = np.append(base_obs, battery_obs)
         return augmented_obs
     
@@ -190,6 +197,8 @@ class PowerTradingEnv(gym.Env):
                 # Discharge battery and calculate reward (Positive reward for profit, negative for loss)
                 duration_actual = self.battery.discharge(current_price, duration=1)
                 reward = (self.battery.continuous_power * duration_actual) * (current_price - self.battery.avg_energy_price) 
+        else:
+            self.battery.hold() # Call hold method to capture state observation in battery deque 
             
             power_traded = (duration_actual * self.battery.continuous_power)
         return reward, power_traded
