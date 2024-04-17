@@ -9,7 +9,6 @@ from gym.spaces import Discrete
 import logging
 logging.basicConfig(level=logging.DEBUG)
 
-
 class Actions(Enum):
     Discharge = 0
     Charge = 1
@@ -150,23 +149,14 @@ class PowerTradingEnv(gym.Env):
         '''
         Produce Observations for agent
         '''
+        # array with dimensions (window_size x num_features)
         base_obs = self.signal_features[(self._current_tick - self.window_size + 1):self._current_tick+1]
         
-
-        
+        # Battery observations are array with dimensions (window_size x 1)
         battery_capacity = np.array(self.battery.capacity_observation).reshape(-1, 1)
         battery_price = np.array(self.battery.price_observation).reshape(-1, 1)
-
-        logging.debug(f"Battery Capacity: {battery_capacity.shape}")
-        logging.debug(f"Battery Price: {battery_price.shape}")
-        
-        logging.debug(f"Battery Capacity: {battery_capacity}")
-        logging.debug(f"Battery Price: {battery_price}")
         
         augmented_observation = np.column_stack((base_obs, battery_capacity, battery_price))
-
-        
-
         return augmented_observation
     
     def _update_history(self, info):
@@ -217,7 +207,7 @@ class PowerTradingEnv(gym.Env):
         else:
             self.battery.hold(current_price) # Call hold method to capture state observation in battery deque 
             
-            power_traded = (duration_actual * self.battery.continuous_power)
+        power_traded = (duration_actual * self.battery.continuous_power)
         return reward, power_traded
     
     def _update_profit(self, power_traded, action):
