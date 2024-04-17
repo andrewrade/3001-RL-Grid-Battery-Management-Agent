@@ -154,7 +154,7 @@ class PowerTradingEnv(gym.Env):
         
         # Battery observations are array with dimensions (window_size x 1)
         battery_capacity = np.array(self.battery.capacity_observation).reshape(-1, 1)
-        battery_price = np.array(self.battery.price_observation).reshape(-1, 1)
+        battery_price = np.array(self.battery.avg_price_observation).reshape(-1, 1)
         
         augmented_observation = np.column_stack((base_obs, battery_capacity, battery_price))
         return augmented_observation
@@ -202,7 +202,7 @@ class PowerTradingEnv(gym.Env):
                 reward += penalty 
             else:
                 # Discharge battery and calculate reward (Positive reward for profit, negative for loss)
-                duration_actual = self.battery.discharge(current_price, duration=1)
+                duration_actual = self.battery.discharge(duration=1)
                 reward = (self.battery.continuous_power * duration_actual) * (current_price - self.battery.avg_energy_price) 
         else:
             self.battery.hold() # Call hold method to capture state observation in battery deque 
