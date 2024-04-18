@@ -3,5 +3,5 @@ from setuptools import setup
 setup(
     name="gym_power_trading",
     version="0.0.1",
-    install_requires=["gym==0.26.2", "gym-anytrading==2.0.0"],
+    install_requires=["gym==0.26.2"],
 )

@@ -1,5 +1,7 @@
+from collections import deque
+
 class Battery():
-    def __init__(self, nominal_capacity=80, continuous_power=20, charging_efficiency=0.95) -> None:
+    def __init__(self, nominal_capacity, continuous_power, charging_efficiency, observation_window_size) -> None:
         '''
         Based on San Diego BESS System 
             nominal_capacity = 80 Mwh
@@ -9,8 +11,13 @@ class Battery():
         self.nominal_capacity = nominal_capacity
         self.continuous_power = continuous_power
         self.charging_efficiency = charging_efficiency
-        self.current_capacity = 0
+        self.observation_window_size = observation_window_size
+        self.current_capacity = 0 
         self.avg_energy_price = 0
+        
+        # Store window size observations of battery state  to append to envirnoment observations
+        self.capacity_observation = deque([0] * self.observation_window_size, maxlen=self.observation_window_size) 
+        self.avg_price_observation = deque([0] * self.observation_window_size, maxlen=self.observation_window_size)
     
     def charge(self, energy_price, duration=1):
         '''
@@ -34,15 +41,18 @@ class Battery():
         effective_energy_price = energy_price / self.charging_efficiency # Correct energy price for efficiency losses
 
         # Pool energy costs; treat all energy as fungible once it enters battery
-        self.avg_energy_price = \
-            round((self.avg_energy_price * self.current_capacity + duration * effective_energy_price * self.continuous_power) \
-            / (self.current_capacity + duration * self.continuous_power), 2)
-        
+        self.avg_energy_price = round((self.avg_energy_price * self.current_capacity + duration * effective_energy_price * self.continuous_power) \
+            / (self.current_capacity + duration * self.continuous_power), 2) 
+     
         self.current_capacity += duration * self.continuous_power
+
+        # Append State to Observation Window
+        self.capacity_observation.append(self.current_capacity)
+        self.avg_price_observation.append(self.avg_energy_price)
 
         return (duration, overcharge)
     
-    def discharge(self, energy_price, duration=1):
+    def discharge(self, duration=1):
         '''
         Parameters:
             Duration (float): Charging duration in hours 
@@ -60,8 +70,20 @@ class Battery():
 
         energy_sold = duration * self.continuous_power
         self.current_capacity -= energy_sold
+
+        # Append State to Observation Window
+        self.capacity_observation.append(self.current_capacity)
+        self.avg_price_observation.append(self.avg_energy_price)
         
         return  (duration)
+    
+    def hold(self):
+        '''
+        Append Battery state to observation window for ticks 
+        when Agent decides to hold
+        '''
+        self.capacity_observation.append(self.current_capacity)
+        self.avg_price_observation.append(self.avg_energy_price)
     
     def reset(self):
         '''
