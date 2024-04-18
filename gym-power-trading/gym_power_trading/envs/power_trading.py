@@ -1,10 +1,10 @@
 import numpy as np
 import pandas as pd
+import matplotlib.pyplot as plt
 from enum import Enum
 
 import gymnasium as gym
 from gym_power_trading.envs.battery import Battery
-from gym.spaces import Discrete
 
 import logging
 logging.basicConfig(level=logging.DEBUG)
@@ -30,7 +30,7 @@ class PowerTradingEnv(gym.Env):
         self.frame_bound = frame_bound
         self.prices, self.signal_features = self._process_data() 
         # Observations (Window Size, Signal Features + Battery Observations)
-        self.shape = (window_size, self.signal_features.shape[1] + 2) 
+        self.shape = (window_size * (self.signal_features.shape[1] + 2), )
         self.trade_fee_ask_percent = 0.005  # unit
         
         self.battery = Battery(
@@ -40,7 +40,7 @@ class PowerTradingEnv(gym.Env):
                 self.window_size
         )
         
-        BOUND = 1e2
+        BOUND = 1e3
         # Initialize Spaces 
         self.action_space = gym.spaces.Discrete(len(Actions))
         self.observation_space = gym.spaces.Box(
@@ -78,8 +78,7 @@ class PowerTradingEnv(gym.Env):
         self.battery.reset()
         observation = self._get_observation()
         info = self._get_info()
-        
-        return observation, info
+        return observation.astype(np.float32), info
     
     def step(self, action):
         '''
@@ -116,6 +115,32 @@ class PowerTradingEnv(gym.Env):
         self._update_history(info)
 
         return observation, step_reward, False, self._truncated, info
+    
+    def render_all(self, title=None):
+        '''
+        Render Agent actions
+        '''
+        window_ticks = np.arange(len(self._position_history))
+        plt.plot(self.prices)
+
+        short_ticks = []
+        long_ticks = []
+        for i, tick in enumerate(window_ticks):
+            if self._position_history[i] == Actions.Discharge:
+                short_ticks.append(tick)
+            elif self._position_history[i] == Actions.Charge:
+                long_ticks.append(tick)
+
+        plt.plot(short_ticks, self.prices[short_ticks], 'ro')
+        plt.plot(long_ticks, self.prices[long_ticks], 'go')
+
+        if title:
+            plt.title(title)
+
+        plt.suptitle(
+            "Total Reward: %.6f" % self._total_reward + ' ~ ' +
+            "Total Profit: %.6f" % self._total_profit
+        )
 
     def _get_info(self):
         '''
@@ -135,7 +160,6 @@ class PowerTradingEnv(gym.Env):
             battery_charge=self.battery.current_capacity
         )
 
-
     def _process_data(self): # Scale features between -1 / 1
         prices = self.df.loc[:, 'Close'].to_numpy()
         prices[self.frame_bound[0] - self.window_size]  # validate index (TODO: Improve validation)
@@ -149,15 +173,19 @@ class PowerTradingEnv(gym.Env):
         '''
         Produce Observations for agent
         '''
-        # array with dimensions (window_size x num_features)
-        base_obs = self.signal_features[(self._current_tick - self.window_size + 1):self._current_tick+1]
+        # Array with dimensions (window_size x num_features)
+        env_obs = self.signal_features[(self._current_tick - self.window_size + 1):self._current_tick+1]
         
         # Battery observations are array with dimensions (window_size x 1)
-        battery_capacity = np.array(self.battery.capacity_observation).reshape(-1, 1)
-        battery_price = np.array(self.battery.avg_price_observation).reshape(-1, 1)
+        # Make column vectors & flip to ensure chronological order with env_obs
+        battery_capacity = np.flip(np.array(self.battery.capacity_observation).reshape(-1, 1)) 
+        battery_price = np.flip(np.array(self.battery.avg_price_observation).reshape(-1, 1))
         
-        augmented_observation = np.column_stack((base_obs, battery_capacity, battery_price))
-        return augmented_observation
+        # Flatten matrix to window_size * features size array with observations in chronological order
+        observation = np.column_stack((env_obs, battery_capacity, battery_price)). \
+            reshape(-1, (self.shape[0])).squeeze()
+        
+        return observation.astype(np.float32)
     
     def _update_history(self, info):
         '''

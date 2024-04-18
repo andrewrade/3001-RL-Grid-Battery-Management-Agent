@@ -52,7 +52,7 @@ class Battery():
 
         return (duration, overcharge)
     
-    def discharge(self, energy_price, duration=1):
+    def discharge(self, duration=1):
         '''
         Parameters:
             Duration (float): Charging duration in hours 
