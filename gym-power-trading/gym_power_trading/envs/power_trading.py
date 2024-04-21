@@ -69,8 +69,8 @@ class PowerTradingEnv(gym.Env):
         self._last_trade_tick = self._current_tick - 1
         self._position = Actions.Hold
         self._position_history = (self.window_size * [None]) + [self._position]
-        #self._total_reward = 0.
-        #self._total_profit = 0.  # unit
+        self._total_reward = 0.
+        self._total_profit = 0.  # Chris uncommented
         self.history = {}
         self.battery.reset()
         observation = self._get_observation()
@@ -92,6 +92,7 @@ class PowerTradingEnv(gym.Env):
         self._current_tick += 1
         self._truncated = (self._current_tick == self._end_tick) # Truncated = True if last tick in time series
         trade = action != Actions.Hold.value # Trade = True if action is not hold
+        # There's a bug here, where action is in [0, 1, 2] and  Actions.Hold.value  = 3
         
         # Calculate reward & profit, update totals
         step_reward, power_traded = self._calculate_reward(action)
@@ -161,13 +162,19 @@ class PowerTradingEnv(gym.Env):
             battery_charge=self.battery.current_capacity
         )
 
-    def _process_data(self): # Scale features between -1 / 1
-        prices = self.df.loc[:, 'Close'].to_numpy()
-        #prices[self.frame_bound[0] - self.window_size]  # validate index (TODO: Improve validation)
-        #prices = prices[self.frame_bound[0]-self.window_size:self.frame_bound[1]]
-        diff = np.insert(np.diff(prices), 0, 0)
-        signal_features = np.column_stack((prices, diff))
+    def _process_data(self):
+        start = self.frame_bound[0] - self.window_size
+        end = self.frame_bound[1]
+        prices = self.df.loc[:, 'RT_LMP'].to_numpy()[start:end]
+        # See the Day Ahead price"forecast" for 10 hours ahead 
+        # (DA LMPs are released at 2pm and apply to the 24 hours of the next day, 
+        #   so 10 future hours are always available)
+        da_prices = self.df.loc[:, 'DA_LMP'].to_numpy()[start+10:end+10]
 
+        # prices = self.df.loc[:, 'Close'].to_numpy()
+
+        diff = np.insert(np.diff(prices), 0, 0)
+        signal_features = np.column_stack((prices, diff, da_prices))
         return prices.astype(np.float32), signal_features.astype(np.float32)
 
     def _get_observation(self):
