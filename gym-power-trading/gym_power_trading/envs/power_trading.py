@@ -9,9 +9,9 @@ import logging
 logging.basicConfig(level=logging.DEBUG)
 
 class Actions(Enum):
-    Discharge = 1
-    Charge = 2
-    Hold = 3
+    Discharge = 0
+    Charge = 1
+    Hold = 2
 
 class PowerTradingEnv(gym.Env):
     """
@@ -69,8 +69,8 @@ class PowerTradingEnv(gym.Env):
         self._last_trade_tick = self._current_tick - 1
         self._position = Actions.Hold
         self._position_history = (self.window_size * [None]) + [self._position]
-        #self._total_reward = 0.
-        #self._total_profit = 0.  # unit
+        self._total_reward = 0.
+        self._total_profit = 0.  # unit
         self.history = {}
         self.battery.reset()
         observation = self._get_observation()
@@ -138,8 +138,8 @@ class PowerTradingEnv(gym.Env):
             plt.title(title)
 
         plt.suptitle(
-            "Total Reward: %.6f" % self._total_reward + ' ~ ' +
-            "Total Profit: %.6f" % self._total_profit
+            "Total Reward: %.2f" % self._total_reward + ' ~ ' +
+            "Total Profit: %.2f" % self._total_profit
         )
 
 
@@ -210,33 +210,39 @@ class PowerTradingEnv(gym.Env):
             action (Enum): Discrete action to take (Hold, Charge, Discharge)
         Returns:
             reward (float): Reward/Penalty from action taken
-            profit (float): $ in profit (different from reward & calculated after trade fees)
+            power traded (float): Mwh of power traded
         """
-        trade = action != Actions.Hold.value # Trade = True if action isn't hold
+        trade = (action != Actions.Hold.value) # Trade = True if action isn't hold
         reward = 0
         penalty = 0
         power_traded = 0
         duration_actual = 0
         current_price = self.prices[self._current_tick]
-
+                
         if trade:
             if action == Actions.Charge.value:
-                # Charge battery and calculate reward 
-                # (Positive reward for reducing avg power price, penalty for increasing avg power price & overcharging)
-                duration_actual, overcharge = self.battery.charge(current_price, duration=1) # Overcharge=True if battery has insufficient capacity to charge full 1-hr tick 
+                '''
+                Charge battery and calculate reward 
+                (Positive reward for reducing avg power price, penalty for increasing avg power price & overcharging)
+                Overcharge=True if battery has insufficient capacity to charge full 1-hr tick 
+                '''
+                duration_actual, overcharge = self.battery.charge(current_price, duration=1) 
                 reward = (self.battery.avg_energy_price - current_price) * duration_actual
+                
+                # Clip duration to prevent excessively large overcharging penalties
+                duration_actual_clipped = duration_actual if duration_actual > 0.1 else 0.1 
                 if overcharge:
-                    if duration_actual < 0.1:
-                        duration_actual = 0.1 # Clip duration to prevent excessively large penalties
-                    penalty = -1 / (duration_actual) # Scale penalty by amt of overcharging (shorter charge duration = longer overcharging)
-                    reward += penalty
-            else:
+                    # Scale penalty by amt of overcharging (shorter charge duration = longer overcharging)
+                    penalty = 1 / (duration_actual_clipped) 
+                    reward -= penalty
+
+            elif action == Actions.Discharge.value:
                 # Discharge battery and calculate reward (Positive reward for profit, negative for loss)
                 duration_actual = self.battery.discharge(duration=1)
                 reward = (self.battery.continuous_power * duration_actual) * (current_price - self.battery.avg_energy_price) 
         else:
             self.battery.hold() # Call hold method to capture state observation in battery deque 
-            
+
         power_traded = (duration_actual * self.battery.continuous_power)
         return reward, power_traded
     
@@ -249,12 +255,17 @@ class PowerTradingEnv(gym.Env):
             profit (float): Profit in $ generated when the agent sells power
         """
         profit = 0
-
-        if action == Actions.Discharge.value:
-            current_price = self.prices[self._current_tick]
-            profit += (current_price - self.battery.avg_energy_price) * power_traded * (1 - self.trade_fee_ask_percent)
+        current_price = self.prices[self._current_tick]
+        
+        if action == Actions.Charge.value:
+                # Charging costs money (revenue when power price is negative)
+                profit -= current_price * power_traded 
+        elif action == Actions.Discharge.value:
+            # Discharging produces revenue (cost when power price is negative)
+            profit += current_price * power_traded * (1 - self.trade_fee_ask_percent)
         
         return profit
+    
 
 
 
