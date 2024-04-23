@@ -1,6 +1,7 @@
 from collections import deque
 
 class Battery():
+
     def __init__(self, nominal_capacity, continuous_power, charging_efficiency, observation_window_size) -> None:
         """
         Based on San Diego BESS System 
@@ -48,8 +49,11 @@ class Battery():
         self.current_capacity += duration * self.continuous_power
 
         # Append State to Observation Window
-        self.capacity_observation.append(self.current_capacity)
-        self.avg_price_observation.append(self.avg_energy_price)
+        # Normalize state of charge
+        pct_capacity = self.current_capacity / self.nominal_capacity 
+        
+        self.capacity_observation.append(pct_capacity)
+        self.avg_price_observation.append(self.avg_energy_price) 
 
         return (duration, overcharge)
     

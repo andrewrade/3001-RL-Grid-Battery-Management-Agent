@@ -113,7 +113,7 @@ class PowerTradingEnv(gym.Env):
 
         return observation, step_reward, False, self._truncated, info
     
-    def render_all(self, title=None):
+    def render_all(self, title=None, xlim=None):
         """
         Render Agent actions
         """
@@ -132,7 +132,11 @@ class PowerTradingEnv(gym.Env):
         plt.plot(discharge_ticks, self.prices[discharge_ticks], 'ro', label="Discharge")
         plt.plot(charge_ticks, self.prices[charge_ticks], 'go', label="Charge")
         plt.legend()
-        plt.xlim(0, 10000)
+
+        if xlim is None:
+            plt.xlim(0, 10000)
+        else:
+            plt.xlim(xlim)
 
         if title:
             plt.title(title)
@@ -161,12 +165,24 @@ class PowerTradingEnv(gym.Env):
             battery_charge=self.battery.current_capacity
         )
 
-    def _process_data(self): # Scale features between -1 / 1
+    def _process_data(self): 
+        '''
         prices = self.df.loc[:, 'Close'].to_numpy()
         #prices[self.frame_bound[0] - self.window_size]  # validate index (TODO: Improve validation)
         #prices = prices[self.frame_bound[0]-self.window_size:self.frame_bound[1]]
         diff = np.insert(np.diff(prices), 0, 0)
         signal_features = np.column_stack((prices, diff))
+        '''
+        start = self.frame_bound[0] - self.window_size
+        end = self.frame_bound[1]
+        prices = self.df.loc[:, 'RT_LMP'].to_numpy()[start:end]
+        # See the Day Ahead price"forecast" for 10 hours ahead 
+        # (DA LMPs are released at 2pm and apply to the 24 hours of the next day, 
+        #   so 10 future hours are always available)
+        da_prices = self.df.loc[:, 'DA_LMP'].to_numpy()[start+10:end+10]
+        # prices = self.df.loc[:, 'Close'].to_numpy()
+        diff = np.insert(np.diff(prices), 0, 0)
+        signal_features = np.column_stack((prices / 100, diff, da_prices / 100))
 
         return prices.astype(np.float32), signal_features.astype(np.float32)
 
@@ -177,15 +193,19 @@ class PowerTradingEnv(gym.Env):
         signal_features + battery_capacity and battery_avg_price.
         """
         # Array with dimensions (window_size x num_features)
-        env_obs = self.signal_features[(self._current_tick - self.window_size + 1):self._current_tick+1]
+        env_obs = self.signal_features[(self._current_tick - self.window_size + 1):self._current_tick + 1]
         
         # Battery observations are array with dimensions (window_size x 1)
-        # Flip to ensure chronological order with env_obs (deque stores oldest observation at index 0)
-        battery_capacity = np.flip(np.array(self.battery.capacity_observation).reshape(-1, 1)) 
-        battery_price = np.flip(np.array(self.battery.avg_price_observation).reshape(-1, 1))
+        battery_capacity = np.array(self.battery.capacity_observation).reshape(-1, 1)
+        battery_avg_charge_price = np.array(self.battery.avg_price_observation).reshape(-1, 1)
+
+        # Normalize battery avg_charge price based on rolling avg over window 
+        # (focus on local price dynamics + don't peek into future)
+        rolling_avg = self.prices[(self._current_tick - self.window_size + 1):self._current_tick].mean() # Window ma
+        battery_avg_charge_price =  battery_avg_charge_price / rolling_avg
         
-        # Flatten matrix to window_size * features size array with observations in chronological order
-        observation = np.column_stack((env_obs, battery_capacity, battery_price)). \
+        # Flatten matrix to (1, window_size * features size) array with observations in chronological order
+        observation = np.column_stack((env_obs, battery_capacity, battery_avg_charge_price)). \
             reshape(-1, (self.shape[0])).squeeze()
         
         return observation.astype(np.float32)
