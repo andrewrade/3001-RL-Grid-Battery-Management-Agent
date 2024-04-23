@@ -233,7 +233,7 @@ class PowerTradingEnv(gym.Env):
                 duration_actual_clipped = duration_actual if duration_actual > 0.1 else 0.1 
                 if overcharge:
                     # Scale penalty by amt of overcharging (shorter charge duration = longer overcharging)
-                    penalty = 1 / (duration_actual_clipped) 
+                    penalty = 1 #/ (duration_actual_clipped) 
                     reward -= penalty
 
             elif action == Actions.Discharge.value:

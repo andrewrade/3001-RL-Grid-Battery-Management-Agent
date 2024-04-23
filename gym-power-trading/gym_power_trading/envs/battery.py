@@ -39,7 +39,7 @@ class Battery():
             overcharge = True
 
         # Correct energy price for efficiency losses
-        effective_energy_price = energy_price / (self.charging_efficiency if energy_price > 0 else 1) # Don't adjust price when negative
+        effective_energy_price = energy_price / self.charging_efficiency 
 
         # Pool energy costs; treat all energy as fungible once it enters battery
         self.avg_energy_price = round((self.avg_energy_price * self.current_capacity + duration * effective_energy_price * self.continuous_power) \
