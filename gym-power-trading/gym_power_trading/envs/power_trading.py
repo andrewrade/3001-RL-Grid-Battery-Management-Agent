@@ -38,7 +38,7 @@ class PowerTradingEnv(gym.Env):
                 self.window_size
         )
         
-        BOUND = 1e3
+        BOUND = 1e4
         # Initialize Spaces 
         self.action_space = gym.spaces.Discrete(len(Actions))
         self.observation_space = gym.spaces.Box(
@@ -46,9 +46,10 @@ class PowerTradingEnv(gym.Env):
         )
         
         # episode attributes
-        self._start_tick = self.window_size
-        self._end_tick = len(self.prices) - 1
+        self._start_tick = self.frame_bound[0]
+        self._end_tick = self.frame_bound[1] - 1
         self._truncated = None
+        self._done = None
         self._current_tick = None
         self._last_trade_tick = None
         self._position = None
@@ -57,8 +58,17 @@ class PowerTradingEnv(gym.Env):
         self._total_profit = None
         self._first_rendering = None
         self.history = None
-        
     
+    def set_frame_bound(self, start, end):
+        '''
+        Used to increment frame indices when 
+        walk-forward during training
+        '''
+        self.frame_bound = (start, end)
+        self._start_tick = start
+        self._end_tick = end - 1
+        self.reset()
+        
     def reset(self, seed=None, options=None):
         """
         Reset environment to random state and re-initialize the battery
@@ -91,6 +101,7 @@ class PowerTradingEnv(gym.Env):
         """
         self._current_tick += 1
         self._truncated = (self._current_tick == self._end_tick) # Truncated = True if last tick in time series
+        self._done = self._truncated
         trade = action != Actions.Hold.value # Trade = True if action is not hold
         
         # Calculate reward & profit, update totals
@@ -105,13 +116,13 @@ class PowerTradingEnv(gym.Env):
         else:
             self._position = Actions.Hold
 
-        # Record latest observation + environment info
+            # Record latest observation + environment info
         self._position_history.append(self._position)
         observation = self._get_observation()
         info = self._get_info()
         self._update_history(info)
 
-        return observation, step_reward, False, self._truncated, info
+        return observation, step_reward, self._done, self._truncated, info
     
     def render_all(self, title=None, xlim=None):
         """
@@ -182,7 +193,7 @@ class PowerTradingEnv(gym.Env):
         da_prices = self.df.loc[:, 'DA_LMP'].to_numpy()[start+10:end+10]
         # prices = self.df.loc[:, 'Close'].to_numpy()
         diff = np.insert(np.diff(prices), 0, 0)
-        signal_features = np.column_stack((prices / 100, diff, da_prices / 100))
+        signal_features = np.column_stack((prices, diff, da_prices))
 
         return prices.astype(np.float32), signal_features.astype(np.float32)
 
@@ -201,8 +212,9 @@ class PowerTradingEnv(gym.Env):
 
         # Normalize battery avg_charge price based on rolling avg over window 
         # (focus on local price dynamics + don't peek into future)
-        rolling_avg = self.prices[(self._current_tick - self.window_size + 1):self._current_tick].mean() # Window ma
-        battery_avg_charge_price =  battery_avg_charge_price / rolling_avg
+        
+        #rolling_avg = self.prices[(self._current_tick - self.window_size + 1):self._current_tick].mean() # Window ma
+        #battery_avg_charge_price =  battery_avg_charge_price / rolling_avg
         
         # Flatten matrix to (1, window_size * features size) array with observations in chronological order
         observation = np.column_stack((env_obs, battery_capacity, battery_avg_charge_price)). \
