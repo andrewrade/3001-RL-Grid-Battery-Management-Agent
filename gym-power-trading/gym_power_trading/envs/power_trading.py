@@ -9,9 +9,9 @@ import logging
 logging.basicConfig(level=logging.DEBUG)
 
 class Actions(Enum):
-    Discharge = 1
-    Charge = 2
-    Hold = 3
+    Discharge = 0
+    Charge = 1
+    Hold = 2
 
 class PowerTradingEnv(gym.Env):
     """
