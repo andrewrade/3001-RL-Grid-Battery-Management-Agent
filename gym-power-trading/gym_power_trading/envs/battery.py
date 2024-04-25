@@ -77,7 +77,7 @@ class Battery():
         self.current_capacity -= energy_sold
 
         # Append State to Observation Window
-        self.capacity_observation.append(self.current_capacity)
+        self.capacity_observation.append(self.current_capacity / self.nominal_capacity)
         self.avg_price_observation.append(self.avg_energy_price)
         
         return  (duration)
