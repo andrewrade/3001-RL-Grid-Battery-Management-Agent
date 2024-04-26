@@ -1,7 +1,9 @@
 import numpy as np
 import pandas as pd
 import matplotlib.pyplot as plt
+import matplotlib.ticker as ticker
 from enum import Enum
+
 import gymnasium as gym
 from gym_power_trading.envs.battery import Battery
 
@@ -125,15 +127,17 @@ class PowerTradingEnv(gym.Env):
 
         return observation, step_reward, self._done, self._truncated, info
     
-    def render_all(self, title=None, xlim=None):
+    def render_all(self, title=None, xlim=None, fig_size=(10, 5)):
         """
         Render Agent actions
         """
+        fig, ax = plt.subplots(figsize=fig_size)
+        ax.xaxis.set_major_formatter(ticker.StrMethodFormatter('{x:,.0f}'))
+        
         # Plot prices over agent frame bound (start + window --> end)
         eval_window_prices = self.prices[self._start_tick:self._end_tick]
         window_ticks = np.arange(len(eval_window_prices))
-        
-        plt.plot(eval_window_prices)
+        ax.plot(eval_window_prices)
 
         discharge_ticks = []
         charge_ticks = []
@@ -144,8 +148,8 @@ class PowerTradingEnv(gym.Env):
             elif self._position_history[i] == Actions.Discharge:
                 discharge_ticks.append(tick)
         
-        plt.plot(discharge_ticks, eval_window_prices[discharge_ticks], 'ro', label="Discharge")
-        plt.plot(charge_ticks, eval_window_prices[charge_ticks], 'go', label="Charge")
+        ax.plot(discharge_ticks, eval_window_prices[discharge_ticks], 'ro', label="Discharge")
+        ax.plot(charge_ticks, eval_window_prices[charge_ticks], 'go', label="Charge")
         plt.legend()
 
         if xlim is not None:
@@ -155,8 +159,7 @@ class PowerTradingEnv(gym.Env):
             plt.title(title)
 
         plt.suptitle(
-            "Total Reward: %.2f" % self._total_reward + ' ~ ' +
-            "Total Profit: %.2f" % self._total_profit
+            f"Total Reward: {self._total_reward:,.2f} ~ Total Profit: ${self._total_profit:,.2f}" 
         )
 
 
@@ -281,12 +284,12 @@ class PowerTradingEnv(gym.Env):
                         if (revenue  + np.abs(cost_basis)) >= 0:
                             log_return = np.log(revenue + np.abs(cost_basis)) # If cost basis is 0 or negative, pure profit
                         else:
-                            reward = -1 # Penalty for loss
+                            reward = -2 # Penalty for loss
                     elif revenue > 0:
                         log_return = np.log(np.abs(revenue) / cost_basis)
                         reward = log_return # flip reward to penalty if sold at loss
                     else:
-                        reward = -1 # Penalty for loss
+                        reward = -2 # Penalty for loss
         else:
             self.battery.hold() # Call hold method to capture state observation in battery deque 
 
