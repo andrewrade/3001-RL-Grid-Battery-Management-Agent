@@ -31,7 +31,7 @@ class PowerTradingEnv(gym.Env):
         
         self.prices, self.signal_features = self._process_data() 
         # Observations (Window Size, Signal Features + Battery Observations)
-        self.shape = (window_size * (self.signal_features.shape[1] + 2), )
+        self.shape = (window_size * (self.signal_features.shape[1]) + 2, )
         self.trade_fee_ask_percent = 0.005  # unit
         
         self.battery = Battery(
@@ -177,17 +177,18 @@ class PowerTradingEnv(gym.Env):
         )
 
     def _process_data(self): 
-        # Shit 10 ticks forward to match DA dims
-        prices = self.df.loc[:, 'RT_LMP'].to_numpy()[:-10] 
+        # Shift 10 ticks forward to match DA dims
+        da_lookahead = min(10,self.window_size) # if only use window = 3, only look 3 hours ahead - window size changes meaning of da prices
+        prices = self.df.loc[:, 'RT_LMP'].to_numpy()[:-da_lookahead] 
         # See the Day Ahead price"forecast" for 10 hours ahead 
         # (DA LMPs are released at 2pm and apply to the 24 hours of the next day, 
         #   so 10 future hours are always available)
-        da_prices = self.df.loc[:, 'DA_LMP'].to_numpy()[10:] 
+        da_prices = self.df.loc[:, 'DA_LMP'].to_numpy()[da_lookahead-1:-1] #-1 so always sees DA price for current hour
+        ewma = self.df.loc[:, 'RT_LMP'][:-da_lookahead].ewm(span = 24*2).mean().to_numpy()
+        price_div_ewma = (prices/np.maximum(ewma,10))
 
-        diff = np.diff(prices)
-        pct_diff = np.insert(np.where(prices[:-1] != 0, diff / prices[:-1], 0), 0, 0) # Change from price 1-tick ago
-        prices_signal = prices / da_prices # Take ratio of current price to DA price
-        signal_features = np.column_stack((prices_signal, pct_diff))
+        # signal_features = np.column_stack((prices, da_prices, ewma, price_div_ewma))
+        signal_features = np.column_stack((prices, price_div_ewma))
 
         return prices.astype(np.float32), signal_features.astype(np.float32)
 
@@ -200,19 +201,14 @@ class PowerTradingEnv(gym.Env):
         # Array with dimensions (window_size x num_features)
         env_obs = self.signal_features[(self._current_tick - self.window_size + 1):self._current_tick + 1]
         
-        # Battery observations are array with dimensions (window_size x 1)
-        battery_capacity = np.array(self.battery.capacity_observation).reshape(-1, 1)
-        battery_avg_charge_price = np.array(self.battery.avg_price_observation).reshape(-1, 1)
-
-        # Normalize battery avg_charge price based on rolling avg over window 
-        # (focus on local price dynamics + don't peek into future)
-        rolling_avg = self.prices[(self._current_tick - self.window_size + 1):self._current_tick].mean() # Window ma
-        battery_avg_charge_price_norm =  battery_avg_charge_price / rolling_avg 
+        # Battery observations are array with dimensions (1)
+        battery_capacity = np.array(self.battery.capacity_observation)[-1]
+        battery_avg_charge_price = np.array(self.battery.avg_price_observation)[-1]
         
         # Flatten matrix to (1, window_size * features size) array with observations in chronological order
-        observation = np.column_stack((env_obs, battery_capacity, battery_avg_charge_price_norm)). \
-            reshape(-1, (self.shape[0])).squeeze()
-        
+        observation = np.column_stack((env_obs)). \
+            flatten()
+        observation = np.append(observation,[battery_capacity,battery_avg_charge_price])
         return observation.astype(np.float32)
     
     def _update_history(self, info):
