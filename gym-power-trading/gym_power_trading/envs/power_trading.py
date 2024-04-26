@@ -254,8 +254,6 @@ class PowerTradingEnv(gym.Env):
                 Overcharge=True if battery has insufficient capacity to charge full 1-hr tick 
                 '''
                 duration_actual, overcharge = self.battery.charge(current_price, duration=1) 
-                
-                
                 #reward = (self.battery.avg_energy_price - current_price) * duration_actual
                 #if current_price > 0 and self.battery.avg_energy_price > 0:
                 #    reward = np.log(self.battery.avg_energy_price / current_price)
@@ -266,7 +264,7 @@ class PowerTradingEnv(gym.Env):
                 #duration_actual_clipped = duration_actual if duration_actual > 0.1 else 0.1 
                 if overcharge:
                     # Scale penalty by amt of overcharging (shorter charge duration = longer overcharging)
-                    penalty = 0.25 #/ (duration_actual_clipped) 
+                    penalty = 1 #/ (duration_actual_clipped) 
                     reward -= penalty
             elif action == Actions.Discharge.value:
                 # Discharge battery and calculate reward (Positive reward for profit, negative for loss)
@@ -274,16 +272,21 @@ class PowerTradingEnv(gym.Env):
                 
                 #reward = (self.battery.continuous_power * duration_actual) * (current_price - self.battery.avg_energy_price) 
                 if duration_actual == 0:
-                    penalty = 0.25
+                    penalty = 1
                     reward -= penalty# Penalize for discharging empty battery
                 else:
                     revenue = (self.battery.continuous_power * duration_actual) * (current_price)
                     cost_basis = (self.battery.continuous_power * duration_actual) * (self.battery.avg_energy_price)
                     if cost_basis <= 0: 
-                        log_return = np.log(revenue + np.abs(cost_basis)) # If cost basis is 0 or negative, pure profit
-                    else:
+                        if (revenue  + np.abs(cost_basis)) >= 0:
+                            log_return = np.log(revenue + np.abs(cost_basis)) # If cost basis is 0 or negative, pure profit
+                        else:
+                            reward = -1 # Penalty for loss
+                    elif revenue > 0:
                         log_return = np.log(np.abs(revenue) / cost_basis)
-                        reward = log_return if revenue > 0 else -log_return # flip reward to penalty if sold at loss
+                        reward = log_return # flip reward to penalty if sold at loss
+                    else:
+                        reward = -1 # Penalty for loss
         else:
             self.battery.hold() # Call hold method to capture state observation in battery deque 
 
