@@ -1,7 +1,9 @@
 import numpy as np
 import pandas as pd
 import matplotlib.pyplot as plt
+import matplotlib.ticker as ticker
 from enum import Enum
+
 import gymnasium as gym
 from gym_power_trading.envs.battery import Battery
 
@@ -24,8 +26,11 @@ class PowerTradingEnv(gym.Env):
 
         # Process Inputs
         self.df = df
-        self.window_size = window_size
         self.frame_bound = frame_bound
+        self.window_size = window_size
+        self._start_tick = self.frame_bound[0] + (self.window_size - 1)
+        self._end_tick = self.frame_bound[1] - 1
+        
         self.prices, self.signal_features = self._process_data() 
         # Observations (Window Size, Signal Features + Battery Observations)
         self.shape = (window_size * (self.signal_features.shape[1] + 2), )
@@ -38,7 +43,7 @@ class PowerTradingEnv(gym.Env):
                 self.window_size
         )
         
-        BOUND = 1e3
+        BOUND = 1e4
         # Initialize Spaces 
         self.action_space = gym.spaces.Discrete(len(Actions))
         self.observation_space = gym.spaces.Box(
@@ -46,9 +51,8 @@ class PowerTradingEnv(gym.Env):
         )
         
         # episode attributes
-        self._start_tick = self.window_size
-        self._end_tick = len(self.prices) - 1
         self._truncated = None
+        self._done = None
         self._current_tick = None
         self._last_trade_tick = None
         self._position = None
@@ -57,8 +61,17 @@ class PowerTradingEnv(gym.Env):
         self._total_profit = None
         self._first_rendering = None
         self.history = None
-        
     
+    def set_frame_bound(self, start, end):
+        '''
+        Used to increment frame indices when 
+        walk-forward during training
+        '''
+        self.frame_bound = (start, end)
+        self._start_tick = start + (self.window_size - 1)
+        self._end_tick = end - 1
+        self.reset()
+        
     def reset(self, seed=None, options=None):
         """
         Reset environment to random state and re-initialize the battery
@@ -68,7 +81,7 @@ class PowerTradingEnv(gym.Env):
         self._current_tick = self._start_tick
         self._last_trade_tick = self._current_tick - 1
         self._position = Actions.Hold
-        self._position_history = (self.window_size * [None]) + [self._position]
+        self._position_history = ((self.window_size - 1) * [None]) + [self._position]
         self._total_reward = 0.
         self._total_profit = 0.  # unit
         self.history = {}
@@ -91,6 +104,7 @@ class PowerTradingEnv(gym.Env):
         """
         self._current_tick += 1
         self._truncated = (self._current_tick == self._end_tick) # Truncated = True if last tick in time series
+        self._done = self._truncated
         trade = action != Actions.Hold.value # Trade = True if action is not hold
         
         # Calculate reward & profit, update totals
@@ -105,41 +119,47 @@ class PowerTradingEnv(gym.Env):
         else:
             self._position = Actions.Hold
 
-        # Record latest observation + environment info
+            # Record latest observation + environment info
         self._position_history.append(self._position)
         observation = self._get_observation()
         info = self._get_info()
         self._update_history(info)
 
-        return observation, step_reward, False, self._truncated, info
+        return observation, step_reward, self._done, self._truncated, info
     
-    def render_all(self, title=None):
+    def render_all(self, title=None, xlim=None, fig_size=(10, 5)):
         """
         Render Agent actions
         """
-        window_ticks = np.arange(len(self._position_history))
-        plt.plot(self.prices)
+        fig, ax = plt.subplots(figsize=fig_size)
+        ax.xaxis.set_major_formatter(ticker.StrMethodFormatter('{x:,.0f}'))
+        
+        # Plot prices over agent frame bound (start + window --> end)
+        eval_window_prices = self.prices[self._start_tick:self._end_tick]
+        window_ticks = np.arange(len(eval_window_prices))
+        ax.plot(eval_window_prices)
 
         discharge_ticks = []
         charge_ticks = []
-        
+
         for i, tick in enumerate(window_ticks):
             if self._position_history[i] == Actions.Charge:
                 charge_ticks.append(tick)
             elif self._position_history[i] == Actions.Discharge:
                 discharge_ticks.append(tick)
-            
-        plt.plot(discharge_ticks, self.prices[discharge_ticks], 'ro', label="Discharge")
-        plt.plot(charge_ticks, self.prices[charge_ticks], 'go', label="Charge")
+        
+        ax.plot(discharge_ticks, eval_window_prices[discharge_ticks], 'ro', label="Discharge")
+        ax.plot(charge_ticks, eval_window_prices[charge_ticks], 'go', label="Charge")
         plt.legend()
-        plt.xlim(0, 10000)
+
+        if xlim is not None:
+            plt.xlim(xlim)
 
         if title:
             plt.title(title)
 
         plt.suptitle(
-            "Total Reward: %.2f" % self._total_reward + ' ~ ' +
-            "Total Profit: %.2f" % self._total_profit
+            f"Total Reward: {self._total_reward:,.2f} ~ Total Profit: ${self._total_profit:,.2f}" 
         )
 
 
@@ -161,12 +181,18 @@ class PowerTradingEnv(gym.Env):
             battery_charge=self.battery.current_capacity
         )
 
-    def _process_data(self): # Scale features between -1 / 1
-        prices = self.df.loc[:, 'Close'].to_numpy()
-        #prices[self.frame_bound[0] - self.window_size]  # validate index (TODO: Improve validation)
-        #prices = prices[self.frame_bound[0]-self.window_size:self.frame_bound[1]]
-        diff = np.insert(np.diff(prices), 0, 0)
-        signal_features = np.column_stack((prices, diff))
+    def _process_data(self): 
+        # Shit 10 ticks forward to match DA dims
+        prices = self.df.loc[:, 'RT_LMP'].to_numpy()[:-10] 
+        # See the Day Ahead price"forecast" for 10 hours ahead 
+        # (DA LMPs are released at 2pm and apply to the 24 hours of the next day, 
+        #   so 10 future hours are always available)
+        da_prices = self.df.loc[:, 'DA_LMP'].to_numpy()[10:] 
+
+        diff = np.diff(prices)
+        pct_diff = np.insert(np.where(prices[:-1] != 0, diff / prices[:-1], 0), 0, 0) # Change from price 1-tick ago
+        prices_signal = prices / da_prices # Take ratio of current price to DA price
+        signal_features = np.column_stack((prices_signal, pct_diff))
 
         return prices.astype(np.float32), signal_features.astype(np.float32)
 
@@ -177,15 +203,19 @@ class PowerTradingEnv(gym.Env):
         signal_features + battery_capacity and battery_avg_price.
         """
         # Array with dimensions (window_size x num_features)
-        env_obs = self.signal_features[(self._current_tick - self.window_size + 1):self._current_tick+1]
+        env_obs = self.signal_features[(self._current_tick - self.window_size + 1):self._current_tick + 1]
         
         # Battery observations are array with dimensions (window_size x 1)
-        # Flip to ensure chronological order with env_obs (deque stores oldest observation at index 0)
-        battery_capacity = np.flip(np.array(self.battery.capacity_observation).reshape(-1, 1)) 
-        battery_price = np.flip(np.array(self.battery.avg_price_observation).reshape(-1, 1))
+        battery_capacity = np.array(self.battery.capacity_observation).reshape(-1, 1)
+        battery_avg_charge_price = np.array(self.battery.avg_price_observation).reshape(-1, 1)
+
+        # Normalize battery avg_charge price based on rolling avg over window 
+        # (focus on local price dynamics + don't peek into future)
+        rolling_avg = self.prices[(self._current_tick - self.window_size + 1):self._current_tick].mean() # Window ma
+        battery_avg_charge_price_norm =  battery_avg_charge_price / rolling_avg 
         
-        # Flatten matrix to window_size * features size array with observations in chronological order
-        observation = np.column_stack((env_obs, battery_capacity, battery_price)). \
+        # Flatten matrix to (1, window_size * features size) array with observations in chronological order
+        observation = np.column_stack((env_obs, battery_capacity, battery_avg_charge_price_norm)). \
             reshape(-1, (self.shape[0])).squeeze()
         
         return observation.astype(np.float32)
@@ -227,19 +257,39 @@ class PowerTradingEnv(gym.Env):
                 Overcharge=True if battery has insufficient capacity to charge full 1-hr tick 
                 '''
                 duration_actual, overcharge = self.battery.charge(current_price, duration=1) 
-                reward = (self.battery.avg_energy_price - current_price) * duration_actual
-                
+                #reward = (self.battery.avg_energy_price - current_price) * duration_actual
+                #if current_price > 0 and self.battery.avg_energy_price > 0:
+                #    reward = np.log(self.battery.avg_energy_price / current_price)
+                #else:
+                #    reward = 0    
+        
                 # Clip duration to prevent excessively large overcharging penalties
-                duration_actual_clipped = duration_actual if duration_actual > 0.1 else 0.1 
+                #duration_actual_clipped = duration_actual if duration_actual > 0.1 else 0.1 
                 if overcharge:
                     # Scale penalty by amt of overcharging (shorter charge duration = longer overcharging)
-                    penalty = 1 / (duration_actual_clipped) 
+                    penalty = 1 #/ (duration_actual_clipped) 
                     reward -= penalty
-
             elif action == Actions.Discharge.value:
                 # Discharge battery and calculate reward (Positive reward for profit, negative for loss)
                 duration_actual = self.battery.discharge(duration=1)
-                reward = (self.battery.continuous_power * duration_actual) * (current_price - self.battery.avg_energy_price) 
+                
+                #reward = (self.battery.continuous_power * duration_actual) * (current_price - self.battery.avg_energy_price) 
+                if duration_actual == 0:
+                    penalty = 1
+                    reward -= penalty# Penalize for discharging empty battery
+                else:
+                    revenue = (self.battery.continuous_power * duration_actual) * (current_price)
+                    cost_basis = (self.battery.continuous_power * duration_actual) * (self.battery.avg_energy_price)
+                    if cost_basis <= 0: 
+                        if (revenue  + np.abs(cost_basis)) >= 0:
+                            log_return = np.log(revenue + np.abs(cost_basis)) # If cost basis is 0 or negative, pure profit
+                        else:
+                            reward = -2 # Penalty for loss
+                    elif revenue > 0:
+                        log_return = np.log(np.abs(revenue) / cost_basis)
+                        reward = log_return # flip reward to penalty if sold at loss
+                    else:
+                        reward = -2 # Penalty for loss
         else:
             self.battery.hold() # Call hold method to capture state observation in battery deque 
 
