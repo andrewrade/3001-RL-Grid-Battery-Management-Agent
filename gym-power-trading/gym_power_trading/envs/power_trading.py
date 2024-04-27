@@ -20,6 +20,15 @@ class PowerTradingEnv(gym.Env):
     via battery charging, discharging, reward and profit functions. 
     """
     def __init__(self, df, window_size, frame_bound, battery_capacity=80, battery_cont_power=20, charging_efficiency=0.95):
+        """
+        Parameters:
+            df (dataframe): Dataframe containing raw historical power prices for agent training / testing
+            window_size (int): Number of time ticks to include in each observation
+            frame_bound (tuple): Start and end index from the dataframe to train / test the agent on
+            battery_capacity (float): Capacity of battery agent manages. Same units as cost basis from df
+            battery_cont_power (float): Battery continious power output. Same scale as capacity (ie kWh -> kW, Mwh -> Mw)
+            charging_efficiency (float): Percentage conversion between purchased an stored energy. 
+        """
         assert len(frame_bound) == 2
 
         # Process Inputs
@@ -28,11 +37,12 @@ class PowerTradingEnv(gym.Env):
         self.window_size = window_size
         self._start_tick = self.frame_bound[0] + (self.window_size - 1)
         self._end_tick = self.frame_bound[1] - 1
-        
         self.prices, self.signal_features = self._process_data() 
-        # Observations (Window Size, Signal Features + Battery Observations)
-        self.shape = (window_size * (self.signal_features.shape[1] + 2), )
         self.trade_fee_ask_percent = 0.005  # unit
+
+        # Observations (Window Size, Signal Features + Battery Observations)
+        BATTERY_OBSERVATIONS = 2
+        self.shape = (window_size * (self.signal_features.shape[1] + BATTERY_OBSERVATIONS),)
         
         self.battery = Battery(
                 battery_capacity,
@@ -40,7 +50,7 @@ class PowerTradingEnv(gym.Env):
                 charging_efficiency,
                 self.window_size
         )
-        
+
         BOUND = 1e2
         # Initialize Spaces 
         self.action_space = gym.spaces.Discrete(len(Actions))
@@ -61,10 +71,12 @@ class PowerTradingEnv(gym.Env):
         self.history = None
     
     def set_frame_bound(self, start, end):
-        '''
-        Used to increment frame indices when 
-        walk-forward during training
-        '''
+        """
+        Used to increment frame indices for training episodes
+        Parameters:
+            start (int): Episode starting index
+            end (int): Index for final tick in episode  
+        """
         self.frame_bound = (start, end)
         self._start_tick = start + (self.window_size - 1)
         self._end_tick = end - 1
@@ -72,7 +84,7 @@ class PowerTradingEnv(gym.Env):
         
     def reset(self, seed=None, options=None):
         """
-        Reset environment to random state and re-initialize the battery
+        Reset environment and battery state
         """
         super().reset(seed=seed, options=options)
         self._truncated = False
@@ -127,9 +139,13 @@ class PowerTradingEnv(gym.Env):
     
     def render_all(self, title=None, xlim=None, fig_size=(10, 5)):
         """
-        Render Agent actions
+        Render plot of Agent actions (Charge / Discharge) throughout Episode
+        Parameters:
+            title (Str): Title of chart
+            xlim (tup): Start and end indices for x-axis
+            fig_size (tup): Size of rendered plot
         """
-        # Plot prices over agent frame bound (start + window --> end)
+        # Plot prices over agent frame bound (start --> end)
         eval_window_prices = self.prices[self._start_tick:self._end_tick]
         window_ticks = np.arange(len(eval_window_prices))
     
@@ -197,11 +213,13 @@ class PowerTradingEnv(gym.Env):
         Produce Observations vector for agent. Each vector has 
         window_size obervations in chronological order that include
         signal_features + battery_capacity and battery_avg_price.
+        Returns:
+            observation (ndarray): Array with dims window_size  x (signal_features + battery_observations) 
         """
         # Array with dimensions (window_size x num_features)
         env_obs = self.signal_features[(self._current_tick - self.window_size + 1):self._current_tick + 1]
         
-        # Battery observations are array with dimensions (window_size x 1)
+        # Battery observations are arrays with dimensions (window_size x 1)
         battery_capacity = np.array(self.battery.capacity_observation).reshape(-1, 1)
         battery_avg_charge_price = np.array(self.battery.avg_price_observation).reshape(-1, 1)
 
@@ -238,9 +256,8 @@ class PowerTradingEnv(gym.Env):
             reward (float): Reward/Penalty from action taken
             power traded (float): Mwh of power traded
         """
-
         BATTERY_PENALTY = 1 # Penalty for mismanaging battery (ie discharge empty battery, charge full battery)
-        LOSS_PENALTY = 2 # Penalty for trading at a loss
+        LOSS_PENALTY = 3 # Penalty for trading at a loss
         
         reward = 0
         power_traded = 0
@@ -249,20 +266,21 @@ class PowerTradingEnv(gym.Env):
         
         match action:
 
-            case Actions.Charge:
+            case Actions.Charge.value:
                 '''
                 Charge battery and calculate penalty
                 Overcharge=True if battery has insufficient capacity to charge full 1-hr tick 
                 '''
                 duration_actual, overcharge = self.battery.charge(current_price, duration=1) 
+                
                 if overcharge:
                     reward -= BATTERY_PENALTY # Overcharging Penalty
 
-            case Actions.Discharge:
+            case Actions.Discharge.value:
                 '''
                 Discharge battery as calculate reward/penalty
-                Penalize agent for trying to discharge empty battery or trading at a loss
-                Reward agent for trading power at profit (log returns of reward)
+                Penalize agent for battery mismanagement (charging full / discharging empty) or trading at a loss
+                Reward agent for trading at profit (log returns of reward)
                 '''
                 duration_actual = self.battery.discharge(duration=1)
 
@@ -283,7 +301,7 @@ class PowerTradingEnv(gym.Env):
                     else:
                         reward -= LOSS_PENALTY
             
-            case Actions.Hold:
+            case Actions.Hold.value:
                 '''
                 Do nothing 
                 (call hold method to capture current state observation in battery observation queue)
@@ -306,11 +324,11 @@ class PowerTradingEnv(gym.Env):
         
         match action:
 
-            case Actions.Charge:
+            case Actions.Charge.value:
                 # Charging costs money (revenue when power price is negative)
                 profit -= current_price * power_traded 
             
-            case Actions.Discharge:
+            case Actions.Discharge.value:
                 # Discharging produces revenue (cost when power price is negative)
                 profit += current_price * power_traded * (1 - self.trade_fee_ask_percent)
         
