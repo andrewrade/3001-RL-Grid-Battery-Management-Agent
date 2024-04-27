@@ -8,6 +8,11 @@ class Battery():
             nominal_capacity = 80 Mwh
             continuous_power = 20 kW (charging and discharging)
             charging_efficiency = 95%
+        Parameters:
+            nominal_capacity (float): Nominal battery capacity in Mwh
+            continuous_power (float): Nominal battery discharge output in Mwh
+            charging_efficiency (float): Percentage conversion efficiency
+            observation_window_size (int): Number of consecutive ticks constituting an observation
         """
         self.nominal_capacity = nominal_capacity
         self.continuous_power = continuous_power
@@ -63,7 +68,7 @@ class Battery():
             Duration (float): Charging duration in hours 
             Energy_Price (float): Energy price in $/kWh
         Returns:
-            energy sold (float): Total amount of energy actually sold (discharged) 
+            duration (float): Actual discharge time in hours 
         """
         charge_0 = self.current_capacity
         charge_1 = charge_0 - duration * self.continuous_power

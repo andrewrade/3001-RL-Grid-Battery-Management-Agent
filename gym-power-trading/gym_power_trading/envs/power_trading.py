@@ -1,14 +1,12 @@
-import numpy as np
-import pandas as pd
-import matplotlib.pyplot as plt
-import matplotlib.ticker as ticker
 from enum import Enum
 
 import gymnasium as gym
-from gym_power_trading.envs.battery import Battery
+import matplotlib.pyplot as plt
+import matplotlib.ticker as ticker
+import numpy as np
+import pandas as pd
 
-import logging
-logging.basicConfig(level=logging.DEBUG)
+from gym_power_trading.envs.battery import Battery
 
 class Actions(Enum):
     Discharge = 0
@@ -43,7 +41,7 @@ class PowerTradingEnv(gym.Env):
                 self.window_size
         )
         
-        BOUND = 1e4
+        BOUND = 1e2
         # Initialize Spaces 
         self.action_space = gym.spaces.Discrete(len(Actions))
         self.observation_space = gym.spaces.Box(
@@ -131,14 +129,10 @@ class PowerTradingEnv(gym.Env):
         """
         Render Agent actions
         """
-        fig, ax = plt.subplots(figsize=fig_size)
-        ax.xaxis.set_major_formatter(ticker.StrMethodFormatter('{x:,.0f}'))
-        
         # Plot prices over agent frame bound (start + window --> end)
         eval_window_prices = self.prices[self._start_tick:self._end_tick]
         window_ticks = np.arange(len(eval_window_prices))
-        ax.plot(eval_window_prices)
-
+    
         discharge_ticks = []
         charge_ticks = []
 
@@ -148,13 +142,15 @@ class PowerTradingEnv(gym.Env):
             elif self._position_history[i] == Actions.Discharge:
                 discharge_ticks.append(tick)
         
+        fig, ax = plt.subplots(figsize=fig_size)
+        ax.xaxis.set_major_formatter(ticker.StrMethodFormatter('{x:,.0f}'))
+        ax.plot(eval_window_prices)
         ax.plot(discharge_ticks, eval_window_prices[discharge_ticks], 'ro', label="Discharge")
         ax.plot(charge_ticks, eval_window_prices[charge_ticks], 'go', label="Charge")
         plt.legend()
 
         if xlim is not None:
             plt.xlim(xlim)
-
         if title:
             plt.title(title)
 
@@ -242,56 +238,57 @@ class PowerTradingEnv(gym.Env):
             reward (float): Reward/Penalty from action taken
             power traded (float): Mwh of power traded
         """
-        trade = (action != Actions.Hold.value) # Trade = True if action isn't hold
+
+        BATTERY_PENALTY = 1 # Penalty for mismanaging battery (ie discharge empty battery, charge full battery)
+        LOSS_PENALTY = 2 # Penalty for trading at a loss
+        
         reward = 0
-        penalty = 0
         power_traded = 0
         duration_actual = 0
         current_price = self.prices[self._current_tick]
-                
-        if trade:
-            if action == Actions.Charge.value:
+        
+        match action:
+
+            case Actions.Charge:
                 '''
-                Charge battery and calculate reward 
-                (Positive reward for reducing avg power price, penalty for increasing avg power price & overcharging)
+                Charge battery and calculate penalty
                 Overcharge=True if battery has insufficient capacity to charge full 1-hr tick 
                 '''
                 duration_actual, overcharge = self.battery.charge(current_price, duration=1) 
-                #reward = (self.battery.avg_energy_price - current_price) * duration_actual
-                #if current_price > 0 and self.battery.avg_energy_price > 0:
-                #    reward = np.log(self.battery.avg_energy_price / current_price)
-                #else:
-                #    reward = 0    
-        
-                # Clip duration to prevent excessively large overcharging penalties
-                #duration_actual_clipped = duration_actual if duration_actual > 0.1 else 0.1 
                 if overcharge:
-                    # Scale penalty by amt of overcharging (shorter charge duration = longer overcharging)
-                    penalty = 1 #/ (duration_actual_clipped) 
-                    reward -= penalty
-            elif action == Actions.Discharge.value:
-                # Discharge battery and calculate reward (Positive reward for profit, negative for loss)
+                    reward -= BATTERY_PENALTY # Overcharging Penalty
+
+            case Actions.Discharge:
+                '''
+                Discharge battery as calculate reward/penalty
+                Penalize agent for trying to discharge empty battery or trading at a loss
+                Reward agent for trading power at profit (log returns of reward)
+                '''
                 duration_actual = self.battery.discharge(duration=1)
-                
-                #reward = (self.battery.continuous_power * duration_actual) * (current_price - self.battery.avg_energy_price) 
+
                 if duration_actual == 0:
-                    penalty = 1
-                    reward -= penalty# Penalize for discharging empty battery
+                    reward -= BATTERY_PENALTY # Discharging when empty Penalty
                 else:
                     revenue = (self.battery.continuous_power * duration_actual) * (current_price)
                     cost_basis = (self.battery.continuous_power * duration_actual) * (self.battery.avg_energy_price)
+                    
                     if cost_basis <= 0: 
                         if (revenue  + np.abs(cost_basis)) >= 0:
                             log_return = np.log(revenue + np.abs(cost_basis)) # If cost basis is 0 or negative, pure profit
                         else:
-                            reward = -2 # Penalty for loss
+                            reward -= LOSS_PENALTY
                     elif revenue > 0:
                         log_return = np.log(np.abs(revenue) / cost_basis)
-                        reward = log_return # flip reward to penalty if sold at loss
+                        reward = log_return # Log return if agent traded for profit
                     else:
-                        reward = -2 # Penalty for loss
-        else:
-            self.battery.hold() # Call hold method to capture state observation in battery deque 
+                        reward -= LOSS_PENALTY
+            
+            case Actions.Hold:
+                '''
+                Do nothing 
+                (call hold method to capture current state observation in battery observation queue)
+                '''
+                self.battery.hold()
 
         power_traded = (duration_actual * self.battery.continuous_power)
         return reward, power_traded
@@ -307,12 +304,15 @@ class PowerTradingEnv(gym.Env):
         profit = 0
         current_price = self.prices[self._current_tick]
         
-        if action == Actions.Charge.value:
+        match action:
+
+            case Actions.Charge:
                 # Charging costs money (revenue when power price is negative)
                 profit -= current_price * power_traded 
-        elif action == Actions.Discharge.value:
-            # Discharging produces revenue (cost when power price is negative)
-            profit += current_price * power_traded * (1 - self.trade_fee_ask_percent)
+            
+            case Actions.Discharge:
+                # Discharging produces revenue (cost when power price is negative)
+                profit += current_price * power_traded * (1 - self.trade_fee_ask_percent)
         
         return profit
     
