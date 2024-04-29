@@ -6,7 +6,7 @@ class Battery():
         """
         Based on San Diego BESS System 
             nominal_capacity = 80 Mwh
-            continuous_power = 20 kW (charging and discharging)
+            continuous_power = 20 Mw (charging and discharging)
             charging_efficiency = 95%
         Parameters:
             nominal_capacity (float): Nominal battery capacity in Mwh
@@ -92,7 +92,7 @@ class Battery():
         Append Battery state to observation window for ticks 
         when Agent decides to hold
         """
-        self.capacity_observation.append(self.current_capacity)
+        self.capacity_observation.append(self.current_capacity / self.nominal_capacity)
         self.avg_price_observation.append(self.avg_energy_price)
     
     def reset(self):

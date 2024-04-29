@@ -257,7 +257,7 @@ class PowerTradingEnv(gym.Env):
             power traded (float): Mwh of power traded
         """
         BATTERY_PENALTY = 1 # Penalty for mismanaging battery (ie discharge empty battery, charge full battery)
-        LOSS_PENALTY = 3 # Penalty for trading at a loss
+        NEGATIVE_REVENUE_PENALTY = 2 # Penalty for trading when power prices are negative
         
         reward = 0
         power_traded = 0
@@ -294,12 +294,12 @@ class PowerTradingEnv(gym.Env):
                         if (revenue  + np.abs(cost_basis)) >= 0:
                             log_return = np.log(revenue + np.abs(cost_basis)) # If cost basis is 0 or negative, pure profit
                         else:
-                            reward -= LOSS_PENALTY
+                            reward -= NEGATIVE_REVENUE_PENALTY
                     elif revenue > 0:
                         log_return = np.log(np.abs(revenue) / cost_basis)
-                        reward = log_return # Log return if agent traded for profit
+                        reward = log_return # Log return 
                     else:
-                        reward -= LOSS_PENALTY
+                        reward -= NEGATIVE_REVENUE_PENALTY
             
             case Actions.Hold.value:
                 '''
