@@ -256,14 +256,17 @@ class PowerTradingEnv(gym.Env):
             reward (float): Reward/Penalty from action taken
             power traded (float): Mwh of power traded
         """
-        BATTERY_PENALTY = 1 # Penalty for mismanaging battery (ie discharge empty battery, charge full battery)
-        NEGATIVE_REVENUE_PENALTY = 2 # Penalty for trading when power prices are negative
+        BATTERY_PENALTY = 2 # Penalty for mismanaging battery (ie discharge empty battery, charge full battery)
+        NEGATIVE_REVENUE_PENALTY = 10 # Penalty for trading when power prices are negative
         
         reward = 0
         power_traded = 0
         duration_actual = 0
         current_price = self.prices[self._current_tick]
-        
+
+        def symlog(x):
+            return np.sign(x)*np.log(np.abs(x)+1)
+                
         match action:
 
             case Actions.Charge.value:
@@ -273,33 +276,29 @@ class PowerTradingEnv(gym.Env):
                 '''
                 duration_actual, overcharge = self.battery.charge(current_price, duration=1) 
                 
+                if current_price < 0:
+                    reward += symlog(duration_actual * self.battery.continuous_power * current_price)
                 if overcharge:
                     reward -= BATTERY_PENALTY # Overcharging Penalty
 
-            case Actions.Discharge.value:
                 '''
                 Discharge battery as calculate reward/penalty
                 Penalize agent for battery mismanagement (charging full / discharging empty) or trading at a loss
                 Reward agent for trading at profit (log returns of reward)
                 '''
+            case Actions.Discharge.value:
+
                 duration_actual = self.battery.discharge(duration=1)
 
                 if duration_actual == 0:
                     reward -= BATTERY_PENALTY # Discharging when empty Penalty
+                elif current_price < 0:
+                    reward -= NEGATIVE_REVENUE_PENALTY
                 else:
                     revenue = (self.battery.continuous_power * duration_actual) * (current_price)
                     cost_basis = (self.battery.continuous_power * duration_actual) * (self.battery.avg_energy_price)
-                    
-                    if cost_basis <= 0: 
-                        if (revenue  + np.abs(cost_basis)) >= 0:
-                            log_return = np.log(revenue + np.abs(cost_basis)) # If cost basis is 0 or negative, pure profit
-                        else:
-                            reward -= NEGATIVE_REVENUE_PENALTY
-                    elif revenue > 0:
-                        log_return = np.log(np.abs(revenue) / cost_basis)
-                        reward = log_return # Log return 
-                    else:
-                        reward -= NEGATIVE_REVENUE_PENALTY
+                    pnl = revenue - cost_basis
+                    reward = symlog(pnl)
             
             case Actions.Hold.value:
                 '''
