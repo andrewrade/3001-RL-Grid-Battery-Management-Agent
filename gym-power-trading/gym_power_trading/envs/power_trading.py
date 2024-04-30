@@ -69,7 +69,16 @@ class PowerTradingEnv(gym.Env):
         self._total_profit = None
         self._first_rendering = None
         self.history = None
-    
+    def set_df(self, df):
+        """
+        Used to change the df
+        Parameters:
+            df (dataframe): df to use
+        """
+        self.df = df
+        self.prices, self.signal_features = self._process_data() 
+
+
     def set_frame_bound(self, start, end):
         """
         Used to increment frame indices for training episodes
@@ -161,8 +170,8 @@ class PowerTradingEnv(gym.Env):
         fig, ax = plt.subplots(figsize=fig_size)
         ax.xaxis.set_major_formatter(ticker.StrMethodFormatter('{x:,.0f}'))
         ax.plot(eval_window_prices)
-        ax.plot(discharge_ticks, eval_window_prices[discharge_ticks], 'ro', label="Discharge")
-        ax.plot(charge_ticks, eval_window_prices[charge_ticks], 'go', label="Charge")
+        ax.plot(discharge_ticks, eval_window_prices[discharge_ticks], 'r.', label="Discharge")
+        ax.plot(charge_ticks, eval_window_prices[charge_ticks], 'g.', label="Charge")
         plt.legend()
 
         if xlim is not None:
